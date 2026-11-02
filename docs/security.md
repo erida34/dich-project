@@ -24,5 +24,7 @@ The library signature verifier invokes `/usr/bin/gpgv` through `/usr/bin/prlimit
 
 The index verifier checks the compressed length and SHA256 against signed metadata before invoking gzip or xz under resource limits. Tests exercise altered, truncated, malformed and oversized compressed inputs. Both compressed input and expanded output are currently held in memory within configured bounds; safe bounded network streaming, Release freshness and `.deb` integrity verification are still required.
 
+Control, relation and version parsing operate on bounded untrusted inputs. Parsed dependencies are descriptive data only; architecture restrictions, build profiles, alternatives and conflicts must be enforced by a future resolver before activation. Do not treat a successfully parsed version or dependency as ABI approval.
+
 ## Security review gate
 No general `.deb` install support until there is a documented threat model, independent review of extraction/activation/GC paths, test corpus with hostile inputs, and crash/failure injection tests.

@@ -33,6 +33,8 @@ The current `dich-apt` library can parse operator TOML policy from a bounded rea
 
 The library also binds a Packages index to the verified Release's source and SHA256/size entry before decoding gzip or xz with bounded helpers (ADR 0004). This does not establish Release freshness or artifact integrity and is not connected to networking or package parsing.
 
+Control paragraph, dependency-expression and Debian version parsers are available as library APIs (ADR 0005). They preserve relation restrictions for future evaluation; parsing does not solve dependencies or establish installation compatibility. They are not connected to the CLI.
+
 ## Invariants
 - No store object is published prior to full verification.
 - No version is activated without a fully validated dependency closure.
