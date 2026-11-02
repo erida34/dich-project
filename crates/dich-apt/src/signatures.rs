@@ -56,9 +56,8 @@ pub fn verify_configured_detached_release(
     verify_detached_release(source, &keyring, release, signature)
 }
 
-/// Verify using caller-supplied keyring bytes. The caller must authenticate their origin;
-/// prefer `verify_configured_inrelease` when using a configured filesystem keyring.
-pub fn verify_inrelease(
+/// Internal primitive: the public entry point loads the configured keyring securely.
+pub(crate) fn verify_inrelease(
     source: &Source,
     keyring: &[u8],
     input: &[u8],
@@ -86,8 +85,8 @@ pub fn verify_inrelease(
     verify(source, keyring, input, None)
 }
 
-/// Verify with caller-supplied keyring bytes; prefer `verify_configured_detached_release`.
-pub fn verify_detached_release(
+/// Internal primitive: the public entry point loads the configured keyring securely.
+pub(crate) fn verify_detached_release(
     source: &Source,
     keyring: &[u8],
     release: &[u8],

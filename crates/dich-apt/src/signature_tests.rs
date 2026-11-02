@@ -1,13 +1,12 @@
 #![cfg(target_os = "linux")]
-use dich_apt::{
-    Distribution, Source, SourcePolicy, import_sources, verify_detached_release, verify_inrelease,
-};
+use crate::signatures::{verify_detached_release, verify_inrelease};
+use crate::{Distribution, Source, SourcePolicy, import_sources};
 
 const KEY: &str = "A85557F5D19615DCBE48C0A673D4B958454DE07D";
-const RELEASE: &[u8] = include_bytes!("fixtures/Release");
-const SIGNATURE: &[u8] = include_bytes!("fixtures/Release.gpg");
-const INRELEASE: &[u8] = include_bytes!("fixtures/InRelease");
-const KEYRING: &[u8] = include_bytes!("fixtures/fixture-keyring.gpg");
+const RELEASE: &[u8] = include_bytes!("../tests/fixtures/Release");
+const SIGNATURE: &[u8] = include_bytes!("../tests/fixtures/Release.gpg");
+const INRELEASE: &[u8] = include_bytes!("../tests/fixtures/InRelease");
+const KEYRING: &[u8] = include_bytes!("../tests/fixtures/fixture-keyring.gpg");
 
 fn source(fingerprint: &str) -> Source {
     let policy = SourcePolicy::new(
@@ -45,7 +44,7 @@ fn rejects_untrusted_signer_tampering_and_missing_trust() {
     assert!(
         verify_inrelease(
             &source,
-            include_bytes!("fixtures/subkey-keyring.gpg"),
+            include_bytes!("../tests/fixtures/subkey-keyring.gpg"),
             INRELEASE
         )
         .is_err()
@@ -85,8 +84,8 @@ fn rejects_unsigned_or_ambiguous_cleartext_and_oversized_inputs() {
 fn subkeys_are_bound_to_the_primary_and_bang_requires_exact_signer() {
     const PRIMARY: &str = "404BE4D2E49FD3618B3E35F3E92C7A9046F5C2A4";
     const SUBKEY: &str = "A473D2FC5A7194D926EB9954F3E200A4A97139F4";
-    let keyring = include_bytes!("fixtures/subkey-keyring.gpg");
-    let signature = include_bytes!("fixtures/SubRelease.gpg");
+    let keyring = include_bytes!("../tests/fixtures/subkey-keyring.gpg");
+    let signature = include_bytes!("../tests/fixtures/SubRelease.gpg");
     assert_eq!(
         verify_detached_release(&source(PRIMARY), keyring, RELEASE, signature)
             .unwrap()
@@ -109,9 +108,9 @@ fn expired_and_revoked_keys_fail_closed() {
     assert!(
         verify_detached_release(
             &expired,
-            include_bytes!("fixtures/expired-keyring.gpg"),
+            include_bytes!("../tests/fixtures/expired-keyring.gpg"),
             RELEASE,
-            include_bytes!("fixtures/ExpiredRelease.gpg")
+            include_bytes!("../tests/fixtures/ExpiredRelease.gpg")
         )
         .is_err()
     );
@@ -119,9 +118,9 @@ fn expired_and_revoked_keys_fail_closed() {
     assert!(
         verify_detached_release(
             &revoked,
-            include_bytes!("fixtures/revoked-keyring.gpg"),
+            include_bytes!("../tests/fixtures/revoked-keyring.gpg"),
             RELEASE,
-            include_bytes!("fixtures/RevokedRelease.gpg")
+            include_bytes!("../tests/fixtures/RevokedRelease.gpg")
         )
         .is_err()
     );
@@ -133,9 +132,9 @@ fn rejects_multiple_signatures_instead_of_choosing_an_ambiguous_result() {
     assert!(
         verify_detached_release(
             &trusted,
-            include_bytes!("fixtures/multiple-keyring.gpg"),
+            include_bytes!("../tests/fixtures/multiple-keyring.gpg"),
             RELEASE,
-            include_bytes!("fixtures/MultiRelease.gpg")
+            include_bytes!("../tests/fixtures/MultiRelease.gpg")
         )
         .is_err()
     );

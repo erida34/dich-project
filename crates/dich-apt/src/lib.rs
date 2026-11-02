@@ -9,6 +9,9 @@ mod sources;
 pub use config::{ConfiguredSource, parse_source_config, read_source_config};
 pub use signatures::{
     SignatureError, VerifiedRelease, verify_configured_detached_release,
-    verify_configured_inrelease, verify_detached_release, verify_inrelease,
+    verify_configured_inrelease,
 };
 pub use sources::{Distribution, Source, SourceError, SourcePolicy, import_sources};
+
+#[cfg(all(test, target_os = "linux"))]
+mod signature_tests;
