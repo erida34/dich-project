@@ -2,7 +2,7 @@
 
 **Dich** — a version-aware, dependency-sharing package store for Debian and Ubuntu sources, written in Rust.
 
-> **Status: experimental scaffold.** The current executable provides command discovery and deliberately rejects package operations. No package installation, cryptographic authentication, immutable store or ABI relocation has been implemented. Do not use it as a production package manager.
+> **Status: experimental scaffold.** The current executable provides command discovery and deliberately rejects package operations. A library-only signature verification prototype exists, but there is no authenticated repository ingestion pipeline, package installation, immutable store or ABI relocation. Do not use it as a production package manager.
 
 ## Vision
 
