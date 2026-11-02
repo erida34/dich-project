@@ -1,0 +1,4 @@
+/target/
+/packaging/generated/
+*.swp
+.DS_Store

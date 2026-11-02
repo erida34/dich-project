@@ -1,0 +1,6 @@
+# Progress log
+
+- 2026-11-02: Initial repository scaffolding, CLI contract, docs/man generator, CI and packaging workflow authored. Cargo/toolchain execution not yet verified in the creation environment. No package operations implemented.
+- 2026-11-02: Phase 0 toolchain milestone: Rust 1.99.1 on Ubuntu WSL passed fmt, workspace check, clippy with warnings denied, all-target tests (2 tests), and docs. Fixed missing generator dependencies and recorded dependency versions in Cargo.lock. The initial CLI help command exposed an ambiguous binary selection; `default-run` now selects `dich`. Package operations and repository verification remain unimplemented; release builds and external CI remain unverified.
+- 2026-11-02: Generated 19 man pages and Bash, Zsh and Fish completions from Clap. Inspected rendered main man page, confirmed top-level command presence in all three completions and man pages, and checked Bash completion syntax. `scripts/check-docs.sh` now checks these properties. Zsh/Fish execution and packaged documentation remain unverified. Next: Phase 0 coding guidelines and templates; CODEOWNERS awaits identified maintainers.
+- 2026-11-02: Added coding guidelines and issue/PR templates. No CODEOWNERS entries were invented: maintainers have not been identified. Next: Phase 1 source configuration and deb822 import.

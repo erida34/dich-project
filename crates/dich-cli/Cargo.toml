@@ -1,0 +1,45 @@
+[package]
+name = "dich-cli"
+default-run = "dich"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Dich versioned package store CLI (experimental scaffold)"
+readme = "../../README.md"
+
+[lib]
+name = "dich_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dich"
+path = "src/main.rs"
+
+[[bin]]
+name = "dich-gen-docs"
+path = "src/bin/gen_docs.rs"
+
+[dependencies]
+clap.workspace = true
+clap_mangen.workspace = true
+clap_complete.workspace = true
+
+[dev-dependencies]
+
+[package.metadata.deb]
+name = "dich"
+maintainer = "Dich Maintainers"
+section = "admin"
+priority = "optional"
+extended-description = "Experimental Rust CLI scaffold for a planned versioned package store using verified Debian/Ubuntu APT repositories. Package installation is not implemented in this version."
+assets = [
+  ["target/release/dich", "usr/bin/", "755"],
+  ["../../packaging/generated/man/*.1", "usr/share/man/man1/", "644"],
+  ["../../packaging/generated/completions/dich.bash", "usr/share/bash-completion/completions/dich", "644"],
+  ["../../packaging/generated/completions/_dich", "usr/share/zsh/vendor-completions/", "644"],
+  ["../../packaging/generated/completions/dich.fish", "usr/share/fish/vendor_completions.d/", "644"],
+  ["../../README.md", "usr/share/doc/dich/README.md", "644"],
+  ["../../LICENSE-MIT", "usr/share/doc/dich/LICENSE-MIT", "644"],
+  ["../../LICENSE-APACHE", "usr/share/doc/dich/LICENSE-APACHE", "644"],
+]

@@ -1,0 +1,9 @@
+# Example only: schema not implemented yet.
+# Never enable unsigned sources or automatic cross-suite mixing.
+[store]
+path = "/var/lib/dich/store"
+
+[security]
+require_signed_release = true
+allow_maintainer_scripts = false
+allow_cross_suite = false

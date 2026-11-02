@@ -1,0 +1,44 @@
+name: Release Debian package (experimental)
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build-deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --all-targets
+      - run: cargo build --release -p dich-cli --bin dich
+      - run: cargo run --release -p dich-cli --bin dich-gen-docs -- packaging/generated
+      - run: cargo install cargo-deb --locked
+      - run: cargo deb -p dich-cli --no-build
+      - name: Inspect and smoke test .deb
+        run: |
+          set -eu
+          deb="$(find target/debian -maxdepth 1 -name '*.deb' | head -n 1)"
+          test -n "$deb"
+          dpkg-deb --contents "$deb" | grep '/usr/bin/dich'
+          dpkg-deb --contents "$deb" | grep '/usr/share/man/man1/dich.1'
+          docker run --rm -v "$PWD:/work:ro" debian:stable-slim sh -c 'apt-get update -qq && apt-get install -y -qq /work/'"$deb"' && dich --help && test -n "$(find /usr/share/man/man1 -name dich.1.gz -o -name dich.1)" && apt-get remove -y -qq dich'
+      - name: Prepare artifacts
+        run: |
+          mkdir -p dist
+          cp target/debian/*.deb dist/
+          cd dist
+          sha256sum *.deb > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dich-deb-amd64
+          path: dist/*
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          prerelease: true

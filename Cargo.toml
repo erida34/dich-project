@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/dich-cli", "crates/dich-core", "crates/dich-apt", "crates/dich-deb", "crates/dich-elf", "crates/dich-store"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+version = "0.1.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+clap = { version = "4.5", features = ["derive"] }
+clap_mangen = "0.3"
+clap_complete = "4.5"
