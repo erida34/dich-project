@@ -11,7 +11,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Add coding guidelines, issue/PR templates, CODEOWNERS as maintainers are identified.
 
 ## Phase 1 — repository metadata and trust (v0.2.x)
-- [ ] Define source config with deb822 `.sources` import, allowed distro suite/component/arch, `Signed-By`, and explicit trust material.
+- [x] Define source config with deb822 `.sources` import, allowed distro suite/component/arch, `Signed-By`, and explicit trust material.
 - [ ] Read signed `InRelease` or `Release`+`Release.gpg`; verify signature and trusted key binding using audited tooling, no insecure fallback.
 - [ ] Verify Release checksum of Packages index, support gzip/xz and bounded decompression, reject unsupported formats safely.
 - [ ] Parse Debian control stanzas, RFC822 continuations, dependency alternatives, epochs and Debian version ordering; unit tests from real fixtures.

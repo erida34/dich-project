@@ -29,7 +29,7 @@ XDG/user store support will be an independently specified mode. Never use arbitr
 ## Trust boundary
 APT authenticity -> verified Release -> hash-verified Packages -> hash-verified `.deb`. Signature verification alone does not grant permission to execute package scripts or to modify system files. Relocation transforms package bytes, creating a new store object identity.
 
-The current `dich-apt` library can import a restricted deb822 source under an independently supplied `SourcePolicy` (ADR 0002). The policy associates a declared distribution, exact URI and suite, allowed components, architecture, keyring path and full fingerprints. This in-memory model does not load operator policy from disk, authenticate repository data, or expose package operations. Import success is not evidence of a trusted repository.
+The current `dich-apt` library can parse operator TOML policy from a bounded reader and import a restricted deb822 source under that independent policy (ADR 0002). The policy associates a declared distribution, exact URI and suite, allowed components, architecture, keyring path and full fingerprints. The caller must securely open the trusted policy and source files; the CLI does not yet load them. The library does not authenticate repository data or expose package operations. Import success is not evidence of a trusted repository.
 
 ## Invariants
 - No store object is published prior to full verification.

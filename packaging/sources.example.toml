@@ -1,0 +1,12 @@
+# Example syntax only. This fingerprint is synthetic, not a Debian archive key.
+# Obtain and independently verify the real fingerprint before configuring trust.
+# The CLI does not yet load this file or contact repositories.
+[[sources]]
+distribution = "debian"
+sources_file = "/etc/dich/sources/debian.sources"
+uri = "https://deb.debian.org/debian"
+suite = "bookworm"
+components = ["main", "contrib"]
+architecture = "amd64"
+keyring = "/usr/share/keyrings/debian-archive-keyring.gpg"
+fingerprints = ["0123456789ABCDEF0123456789ABCDEF01234567"]

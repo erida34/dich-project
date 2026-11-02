@@ -16,6 +16,7 @@ pub enum Distribution {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SourceError {
     InputTooLarge,
+    Io,
     Invalid(&'static str),
     Unsupported(&'static str),
     PolicyMismatch(&'static str),
@@ -24,6 +25,7 @@ impl fmt::Display for SourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InputTooLarge => f.write_str("sources input exceeds the size limit"),
+            Self::Io => f.write_str("failed to read source configuration"),
             Self::Invalid(s) => write!(f, "invalid source configuration: {s}"),
             Self::Unsupported(s) => write!(f, "unsupported source configuration: {s}"),
             Self::PolicyMismatch(s) => write!(f, "source violates configured policy: {s}"),
@@ -105,7 +107,7 @@ fn safe_uri(s: &str) -> bool {
         && !path.split('/').any(|part| part == "." || part == "..")
         && !path.contains("//")
 }
-fn safe_keyring(s: &str) -> bool {
+pub(crate) fn safe_keyring(s: &str) -> bool {
     s.len() <= 4096
         && s.starts_with('/')
         && !s.ends_with('/')

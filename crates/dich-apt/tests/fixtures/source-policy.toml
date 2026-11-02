@@ -1,0 +1,10 @@
+# Fingerprint is synthetic and is not a Debian signing key.
+[[sources]]
+distribution = "debian"
+sources_file = "/etc/dich/sources/debian.sources"
+uri = "https://deb.debian.org/debian"
+suite = "bookworm"
+components = ["main", "contrib"]
+architecture = "amd64"
+keyring = "/usr/share/keyrings/debian-archive-keyring.gpg"
+fingerprints = ["0123456789ABCDEF0123456789ABCDEF01234567"]
