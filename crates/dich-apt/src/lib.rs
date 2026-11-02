@@ -24,6 +24,8 @@ mod signatures;
 pub use keyring::read_configured_keyring;
 mod freshness;
 mod sources;
+mod transport;
+pub use transport::{FetchError, fetch_artifact};
 mod version;
 pub use config::{ConfiguredSource, parse_source_config, read_source_config};
 pub use freshness::{FreshnessError, FreshnessPolicy, ValidatedRelease, validate_release};
@@ -38,3 +40,5 @@ pub use version::{DebianVersion, VersionError};
 mod artifact_tests;
 #[cfg(all(test, target_os = "linux"))]
 mod signature_tests;
+#[cfg(all(test, target_os = "linux"))]
+mod transport_tests;

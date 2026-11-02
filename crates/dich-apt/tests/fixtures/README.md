@@ -7,3 +7,5 @@ The `index/` fixture has a separate throwaway signing key and synthetic SHA256 e
 `control/base-files.control` is an excerpt of the Debian trixie `base-files` control record; `control/trixie-0ad.Packages` is the first record from the Debian trixie main amd64 Packages index cached on `dich-root`. They are parser fixtures, not authenticated inputs or installation advice.
 
 `freshness/` contains synthetic Release records signed by another throwaway key to exercise Origin, suite, Date, Valid-Until and age policy. Their dates and signing key are for deterministic tests only.
+
+`tls/` contains a test-only CA certificate, localhost server certificate and **publicly known test private key**. They are used only by a local TLS test and must never be used to establish trust outside tests.

@@ -15,7 +15,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Read signed `InRelease` or `Release`+`Release.gpg`; verify signature and trusted key binding using audited tooling, no insecure fallback.
 - [x] Verify Release checksum of Packages index, support gzip/xz and bounded decompression, reject unsupported formats safely.
 - [x] Parse Debian control stanzas, RFC822 continuations, dependency alternatives, epochs and Debian version ordering; unit tests from real fixtures.
-- [ ] Download `.deb` by trusted index path; verify size and SHA256 and reject redirects/URLs outside configured policy.
+- [x] Download `.deb` by trusted index path; verify size and SHA256 and reject redirects/URLs outside configured policy.
 - [ ] Cache metadata and artifacts atomically with expiry, timestamps, concurrency locks and integrity rechecks.
 - [ ] `dich sources list`, `dich update`, `dich search`, `dich show`, `dich versions` with output fixtures and offline tests.
 - [ ] Threat tests: forged Release, wrong key, rollback/freeze, checksum mismatch, truncated indices, decompression bomb, malicious relative URL.

@@ -29,13 +29,13 @@ XDG/user store support will be an independently specified mode. Never use arbitr
 ## Trust boundary
 APT authenticity -> verified Release -> hash-verified Packages -> hash-verified `.deb`. Signature verification alone does not grant permission to execute package scripts or to modify system files. Relocation transforms package bytes, creating a new store object identity.
 
-The current `dich-apt` library can parse operator TOML policy from a bounded reader and import a restricted deb822 source under that independent policy (ADR 0002). The policy associates a declared distribution, exact URI and suite, allowed components, architecture, keyring path and full fingerprints. Configured-keyring verification uses `gpgv` and checks signer fingerprints (ADR 0003); callers must securely open the policy and source files, and the CLI does not yet load them. Explicit Release origin, suite and freshness validation is available as a separate gate, but persisted anti-rollback state, network transport and package operations are not implemented. Import or signature success alone is not evidence that a repository is safe to use.
+The current `dich-apt` library can parse operator TOML policy from a bounded reader and import a restricted deb822 source under that independent policy (ADR 0002). The policy associates a declared distribution, exact URI and suite, allowed components, architecture, keyring path and full fingerprints. Configured-keyring verification uses `gpgv` and checks signer fingerprints (ADR 0003); callers must securely open the policy and source files, and the CLI does not yet load them. Explicit Release origin, suite and freshness validation is available as a separate gate, but persisted anti-rollback state, repository update and package installation are not implemented. Import or signature success alone is not evidence that a repository is safe to use.
 
 The library also binds a Packages index to the verified Release's source and SHA256/size entry before decoding gzip or xz with bounded helpers (ADR 0004). This does not establish Release freshness or artifact integrity and is not connected to networking or package parsing.
 
 Control paragraph, dependency-expression and Debian version parsers are available as library APIs (ADR 0005). They preserve relation restrictions for future evaluation; parsing does not solve dependencies or establish installation compatibility. They are not connected to the CLI.
 
-Artifact metadata can be selected from a verified index, bound to the same time-validated Release and checked as a bounded stream into anonymous temporary storage (ADR 0006). Network and redirect enforcement, persistent cache and anti-rollback state are still absent.
+Artifact metadata can be selected from a verified index, bound to the same time-validated Release and downloaded over restricted HTTPS as a bounded stream into anonymous temporary storage (ADR 0006). Persistent cache and anti-rollback state are still absent.
 
 ## Invariants
 - No store object is published prior to full verification.
