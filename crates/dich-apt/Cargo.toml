@@ -13,6 +13,7 @@ sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 ureq = { version = "=2.12.1", default-features = false, features = ["tls"] }
 url = "=2.5.0"
+getrandom = "0.4"
 
 [dev-dependencies]
 rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }

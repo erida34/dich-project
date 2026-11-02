@@ -2,6 +2,10 @@
 //! Source policy, signed metadata verification and bounded parsing; package fetch remains incomplete.
 
 mod artifact;
+#[cfg(target_os = "linux")]
+mod cache;
+#[cfg(target_os = "linux")]
+pub use cache::{CacheError, SnapshotJournal, SnapshotPin};
 mod config;
 pub use artifact::{
     ArtifactError, AuthorizedArtifact, IndexedArtifact, VerifiedArtifact, authorize_artifact,
@@ -38,6 +42,8 @@ pub use version::{DebianVersion, VersionError};
 
 #[cfg(all(test, target_os = "linux"))]
 mod artifact_tests;
+#[cfg(all(test, target_os = "linux"))]
+mod cache_tests;
 #[cfg(all(test, target_os = "linux"))]
 mod signature_tests;
 #[cfg(all(test, target_os = "linux"))]

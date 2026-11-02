@@ -56,10 +56,14 @@ pub struct ValidatedRelease {
     release: VerifiedRelease,
     validated_at: SystemTime,
     expires_at: SystemTime,
+    signed_at: u64,
 }
 impl ValidatedRelease {
     pub(crate) fn release(&self) -> &VerifiedRelease {
         &self.release
+    }
+    pub(crate) fn signed_at(&self) -> u64 {
+        self.signed_at
     }
     pub fn source(&self) -> &crate::Source {
         self.release.source()
@@ -127,6 +131,7 @@ pub fn validate_release(
         release: release.clone(),
         validated_at: now,
         expires_at,
+        signed_at: date,
     })
 }
 
