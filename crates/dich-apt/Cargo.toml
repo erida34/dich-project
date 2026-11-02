@@ -9,3 +9,6 @@ rust-version.workspace = true
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }

@@ -12,6 +12,7 @@ pub enum SignatureError {
     InvalidInput,
     VerificationFailed,
     UntrustedSigner,
+    KeyringAccess,
     HelperUnavailable,
 }
 impl fmt::Display for SignatureError {
@@ -36,7 +37,27 @@ impl VerifiedRelease {
     }
 }
 
-/// Verify one ASCII-armored clearsigned Release using the explicitly configured signer policy.
+/// Verify an InRelease using the securely opened keyring named by source policy.
+pub fn verify_configured_inrelease(
+    source: &Source,
+    input: &[u8],
+) -> Result<VerifiedRelease, SignatureError> {
+    let keyring = crate::read_configured_keyring(source)?;
+    verify_inrelease(source, &keyring, input)
+}
+
+/// Verify a detached signature using the securely opened configured keyring.
+pub fn verify_configured_detached_release(
+    source: &Source,
+    release: &[u8],
+    signature: &[u8],
+) -> Result<VerifiedRelease, SignatureError> {
+    let keyring = crate::read_configured_keyring(source)?;
+    verify_detached_release(source, &keyring, release, signature)
+}
+
+/// Verify using caller-supplied keyring bytes. The caller must authenticate their origin;
+/// prefer `verify_configured_inrelease` when using a configured filesystem keyring.
 pub fn verify_inrelease(
     source: &Source,
     keyring: &[u8],
@@ -65,7 +86,7 @@ pub fn verify_inrelease(
     verify(source, keyring, input, None)
 }
 
-/// Verify a detached Release.gpg over the exact supplied Release bytes.
+/// Verify with caller-supplied keyring bytes; prefer `verify_configured_detached_release`.
 pub fn verify_detached_release(
     source: &Source,
     keyring: &[u8],
@@ -121,7 +142,18 @@ fn verify(
     }
     let status_file =
         fs::File::create(&status_path).map_err(|_| SignatureError::HelperUnavailable)?;
-    let mut cmd = Command::new("/usr/bin/gpgv");
+    // Both executables are fixed system paths. prlimit enforces per-file, address-space,
+    // CPU and descriptor ceilings before exec; absence or failure is fatal.
+    let mut cmd = Command::new("/usr/bin/prlimit");
+    cmd.args([
+        "--fsize=8388608:8388608",
+        "--as=536870912:536870912",
+        "--cpu=10:10",
+        "--nofile=64:64",
+        "--core=0:0",
+        "--",
+        "/usr/bin/gpgv",
+    ]);
     cmd.env_clear()
         .env("LC_ALL", "C")
         .arg("--homedir")
