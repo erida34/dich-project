@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 //! Explicit source policy and conservative deb822 import; no repository data is authenticated yet.
 
+mod artifact;
 mod config;
+pub use artifact::{ArtifactError, IndexedArtifact, select_indexed_artifact};
 mod control;
 mod dependencies;
 pub use control::{ControlError, ControlStanza, parse_control_stanzas};

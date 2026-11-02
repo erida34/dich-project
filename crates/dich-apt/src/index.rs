@@ -61,7 +61,8 @@ impl Error for IndexError {}
 /// Verified compressed bytes have been safely decoded, but Release freshness is unchecked.
 #[derive(Debug, PartialEq, Eq)]
 pub struct VerifiedIndex {
-    contents: Vec<u8>,
+    pub(crate) contents: Vec<u8>,
+    pub(crate) source: crate::Source,
 }
 impl VerifiedIndex {
     pub fn contents(&self) -> &[u8] {
@@ -119,7 +120,10 @@ pub fn verify_packages_index_with_limits(
         return Err(IndexError::Integrity);
     }
     let contents = decompress(format, compressed, limits.expanded)?;
-    Ok(VerifiedIndex { contents })
+    Ok(VerifiedIndex {
+        contents,
+        source: release.source().clone(),
+    })
 }
 
 fn lookup_checksum(release: &[u8], wanted: &str) -> Result<(u64, [u8; 32]), IndexError> {

@@ -1,16 +1,33 @@
 #![cfg(target_os = "linux")]
 use dich_apt::{
-    Distribution, IndexFormat, IndexLimits, SourcePolicy, import_sources,
+    Distribution, IndexFormat, IndexLimits, SourcePolicy, import_sources, select_indexed_artifact,
     verify_configured_inrelease, verify_packages_index, verify_packages_index_with_limits,
 };
 use std::fs;
 
-const KEY: &str = "2621D0B482D3939937D9835FC2E57866B59C9D03";
+const KEY: &str = "AC28462BC0706B3E3B7B09B179BAD7CBF042F23A";
 const CLEAR: &[u8] = include_bytes!("fixtures/index/InRelease");
 const GZIP: &[u8] = include_bytes!("fixtures/index/Packages.gz");
 const XZ: &[u8] = include_bytes!("fixtures/index/Packages.xz");
 const BOMB: &[u8] = include_bytes!("fixtures/index/bomb.gz");
-const CONTENT: &[u8] = b"Package: fixture\nVersion: 1.0-1\nArchitecture: amd64\n\n";
+const CONTENT: &[u8] = include_bytes!("fixtures/index/Packages");
+
+#[test]
+fn selects_only_artifacts_from_authenticated_index_metadata() {
+    let (_dir, release) = verified_release();
+    let index = verify_packages_index(&release, "main", IndexFormat::Gzip, GZIP).unwrap();
+    let artifact = select_indexed_artifact(&index, "fixture", "1.0-1").unwrap();
+    assert_eq!(
+        artifact.path(),
+        "pool/main/f/fixture/fixture_1.0-1_amd64.deb"
+    );
+    assert_eq!(
+        artifact.size(),
+        include_bytes!("fixtures/index/fixture.deb").len() as u64
+    );
+    assert!(select_indexed_artifact(&index, "fixture", "1.0-2").is_err());
+    assert!(select_indexed_artifact(&index, "../fixture", "1.0-1").is_err());
+}
 
 fn verified_release() -> (tempfile::TempDir, dich_apt::VerifiedRelease) {
     let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
