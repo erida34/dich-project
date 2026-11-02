@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
-//! Dich apt subsystem. Implementation follows ROADMAP.md.
+//! Explicit source policy and conservative deb822 import; no repository data is authenticated yet.
 
-pub const STATUS: &str = "not implemented";
+mod sources;
+pub use sources::{Distribution, Source, SourceError, SourcePolicy, import_sources};

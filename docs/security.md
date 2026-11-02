@@ -16,5 +16,9 @@ Malicious or compromised mirror, wrong trusted key, tampered index/blob, reposit
 ## Prohibited shortcuts
 `apt --allow-unauthenticated`, `trusted=yes`, `--insecure`, `curl | sh`, global `LD_LIBRARY_PATH` changes, `chmod -R 777`, untrusted scripts, removing host libraries, executing root in a network build sandbox.
 
+## Current source import boundary
+
+The library-only deb822 importer applies an operator-supplied source allowlist, bounds input, and rejects unsupported fields, missing `Signed-By`, and nonmatching signing fingerprints. It does not inspect the keyring or authenticate signatures, and its URI syntax checks are not a network or redirect security policy. No source can be updated or used for a package operation yet. Keyring file ownership and race-resistant access, actual signer binding, expiry and rollback defenses remain required before consuming repositories.
+
 ## Security review gate
 No general `.deb` install support until there is a documented threat model, independent review of extraction/activation/GC paths, test corpus with hostile inputs, and crash/failure injection tests.

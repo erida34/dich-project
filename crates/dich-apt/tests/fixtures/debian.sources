@@ -1,0 +1,8 @@
+# Representative deb822 source, with a folded component field.
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: bookworm
+Components: main
+ contrib
+Architectures: amd64
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
