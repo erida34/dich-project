@@ -2,7 +2,12 @@
 //! Explicit source policy and conservative deb822 import; no repository data is authenticated yet.
 
 mod config;
+mod index;
 mod keyring;
+pub use index::{
+    IndexError, IndexFormat, IndexLimits, VerifiedIndex, verify_packages_index,
+    verify_packages_index_with_limits,
+};
 mod signatures;
 pub use keyring::read_configured_keyring;
 mod sources;

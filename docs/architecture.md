@@ -31,6 +31,8 @@ APT authenticity -> verified Release -> hash-verified Packages -> hash-verified 
 
 The current `dich-apt` library can parse operator TOML policy from a bounded reader and import a restricted deb822 source under that independent policy (ADR 0002). The policy associates a declared distribution, exact URI and suite, allowed components, architecture, keyring path and full fingerprints. Configured-keyring verification uses `gpgv` and checks signer fingerprints (ADR 0003); callers must securely open the policy and source files, and the CLI does not yet load them. Release identity and freshness, the integrity chain, and package operations are not implemented. Import or signature success alone is not evidence that a repository is safe to use.
 
+The library also binds a Packages index to the verified Release's source and SHA256/size entry before decoding gzip or xz with bounded helpers (ADR 0004). This does not establish Release freshness or artifact integrity and is not connected to networking or package parsing.
+
 ## Invariants
 - No store object is published prior to full verification.
 - No version is activated without a fully validated dependency closure.

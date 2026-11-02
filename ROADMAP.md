@@ -13,7 +13,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 ## Phase 1 — repository metadata and trust (v0.2.x)
 - [x] Define source config with deb822 `.sources` import, allowed distro suite/component/arch, `Signed-By`, and explicit trust material.
 - [x] Read signed `InRelease` or `Release`+`Release.gpg`; verify signature and trusted key binding using audited tooling, no insecure fallback.
-- [ ] Verify Release checksum of Packages index, support gzip/xz and bounded decompression, reject unsupported formats safely.
+- [x] Verify Release checksum of Packages index, support gzip/xz and bounded decompression, reject unsupported formats safely.
 - [ ] Parse Debian control stanzas, RFC822 continuations, dependency alternatives, epochs and Debian version ordering; unit tests from real fixtures.
 - [ ] Download `.deb` by trusted index path; verify size and SHA256 and reject redirects/URLs outside configured policy.
 - [ ] Cache metadata and artifacts atomically with expiry, timestamps, concurrency locks and integrity rechecks.

@@ -22,5 +22,7 @@ The library-only deb822 importer applies an operator-supplied source allowlist, 
 
 The library signature verifier invokes `/usr/bin/gpgv` through `/usr/bin/prlimit` with an isolated temporary keyring and checks the reported signer against the configured fingerprints. The public verification APIs open each configured keyring path component without following symlinks and reject unsafe ownership, writable directories and non-regular keyrings. The caller must also securely load the policy itself. Fixture tests cover revoked and expired keys; Release freshness, rollback, suite identity, index and artifact integrity remain unimplemented. Helper file, address-space, CPU, descriptor and wall-time limits are configured but have not been stress tested. Multiple signatures are accepted only if all are valid and their signers are allowed. Do not use signature success alone to authorize package installation.
 
+The index verifier checks the compressed length and SHA256 against signed metadata before invoking gzip or xz under resource limits. Tests exercise altered, truncated, malformed and oversized compressed inputs. Both compressed input and expanded output are currently held in memory within configured bounds; safe bounded network streaming, Release freshness and `.deb` integrity verification are still required.
+
 ## Security review gate
 No general `.deb` install support until there is a documented threat model, independent review of extraction/activation/GC paths, test corpus with hostile inputs, and crash/failure injection tests.

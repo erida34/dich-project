@@ -28,6 +28,7 @@ pub struct VerifiedRelease {
     contents: Vec<u8>,
     signing_fingerprint: String,
     signing_fingerprints: Vec<String>,
+    source: Source,
 }
 impl VerifiedRelease {
     pub fn contents(&self) -> &[u8] {
@@ -39,6 +40,10 @@ impl VerifiedRelease {
     /// Every verified signer, in gpgv status order.
     pub fn signing_fingerprints(&self) -> &[String] {
         &self.signing_fingerprints
+    }
+    /// Source policy under which the signature was verified.
+    pub fn source(&self) -> &Source {
+        &self.source
     }
 }
 
@@ -228,6 +233,7 @@ fn verify(
         contents,
         signing_fingerprint: signer,
         signing_fingerprints: signers,
+        source: source.clone(),
     })
 }
 

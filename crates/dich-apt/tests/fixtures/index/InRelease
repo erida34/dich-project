@@ -1,0 +1,20 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: Fixture
+Suite: bookworm
+SHA256:
+ 56cc492cbdbbfe4a1e42c57096c70d1c5622cf141e2268bdc73cabbaa9df16a9 71 main/binary-amd64/Packages.gz
+ f9d8cde92005e30b2d83ff05200fb4def1dc689892af62d3098676e525be44d1 112 main/binary-amd64/Packages.xz
+ d65430fc20cba67ec576db4520e0ccb447f1c0b35d201f5f3fe29c85ab876a23 17358 bomb/binary-amd64/Packages.gz
+ 25fdaa133b07eb14a91ce9699afedf0b3a18342f88213140f29987813fb75603 2724 bomb/binary-amd64/Packages.xz
+ 09fb5a365cd380a3977c88990ce58971d804bba27b558f1b6e3c5938f4e78d6b 66 broken/binary-amd64/Packages.gz
+ 102b799c4dbd21e5b040d169860856703ab797fd4f4253be73ea7e7b8e6932b8 107 broken/binary-amd64/Packages.xz
+ af7da538ff015fb5e69cbe8d47a0d03cc6f6516e148b2b3a03389186b7a68f67 94 trailing/binary-amd64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iHUEARYKAB0WIQQmIdC0gtOTmTfZg1/C5XhmtZydAwUCaujk0gAKCRDC5XhmtZyd
+A2NQAQDv3cdj86Xh2jZ4wzzBtagH5YquCgs4ipe/awwAtLjisAEA0S+7os+3hjcG
+vfs38exTLibQliy6Pc38JL5CIq/80g0=
+=1fTD
+-----END PGP SIGNATURE-----
