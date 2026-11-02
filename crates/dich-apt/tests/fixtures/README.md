@@ -5,3 +5,5 @@
 The `index/` fixture has a separate throwaway signing key and synthetic SHA256 entries covering valid gzip/xz data, deliberately truncated streams, trailing junk and highly compressible oversized output. Its public fingerprint is recorded in `index_verification.rs`. The `fixture.deb` bytes are synthetic and are not a valid installable package.
 
 `control/base-files.control` is an excerpt of the Debian trixie `base-files` control record; `control/trixie-0ad.Packages` is the first record from the Debian trixie main amd64 Packages index cached on `dich-root`. They are parser fixtures, not authenticated inputs or installation advice.
+
+`freshness/` contains synthetic Release records signed by another throwaway key to exercise Origin, suite, Date, Valid-Until and age policy. Their dates and signing key are for deterministic tests only.

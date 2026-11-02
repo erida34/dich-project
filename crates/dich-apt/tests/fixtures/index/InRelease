@@ -1,8 +1,10 @@
 -----BEGIN PGP SIGNED MESSAGE-----
 Hash: SHA512
 
-Origin: Fixture
+Origin: Debian
 Suite: bookworm
+Date: Mon, 02 Nov 2026 12:00:00 UTC
+Valid-Until: Wed, 04 Nov 2026 12:00:00 UTC
 SHA256:
  3ab288399f5996480ec963a74b338f7b31af60d5b93aa9db3765b9936c0a8a17 171 main/binary-amd64/Packages.gz
  fa184974c07c71db02266b3a06849f8804e9e3930963a90102136ccabf99d0a5 224 main/binary-amd64/Packages.xz
@@ -13,8 +15,8 @@ SHA256:
  529cc499c9ddacd3e968c5f351939ab4957ecac06877a0a3fdb41b0848520996 194 trailing/binary-amd64/Packages.gz
 -----BEGIN PGP SIGNATURE-----
 
-iHUEARYKAB0WIQSsKEYrwHBrPjt7CbF5utfL8ELyOgUCaujnNQAKCRB5utfL8ELy
-OjL2AQC0R5YKe2xlTj29AychBjrQqR0EKuy6oIssi+B0xofyLwEAlZv8DucOOPMY
-Ets1kzd+M6duJSkx3DX5/xJaZnfI0QM=
-=d85k
+iHUEARYKAB0WIQSd2rC6MIk7voii5YO7usVdyh+aqAUCaujoagAKCRC7usVdyh+a
+qEeBAQCJsTImJbBYyXKPzmFjVrXcAnBHy8tNMIVWMM4lxTqcJgEAyfwX+18jSsXr
+kUs3qJ0osN5CvpkXAHaFXybz/b2FowY=
+=a7mM
 -----END PGP SIGNATURE-----

@@ -1,6 +1,12 @@
 //! Select artifact metadata only from an authenticated Packages index.
-use crate::{DebianVersion, Source, VerifiedIndex, parse_control_stanzas};
-use std::{error::Error, fmt};
+use crate::{DebianVersion, Source, ValidatedRelease, VerifiedIndex, parse_control_stanzas};
+use sha2::{Digest, Sha256};
+use std::{
+    error::Error,
+    fmt,
+    io::{Read, Seek, SeekFrom, Write},
+    time::SystemTime,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ArtifactError {
@@ -8,6 +14,9 @@ pub enum ArtifactError {
     NotFound,
     Ambiguous,
     Unsupported,
+    StaleOrMismatchedRelease,
+    Integrity,
+    Io,
 }
 impl fmt::Display for ArtifactError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -20,12 +29,130 @@ impl Error for ArtifactError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedArtifact {
     pub(crate) source: Source,
+    release_digest: [u8; 32],
     name: String,
     version: String,
     architecture: String,
     path: String,
     size: u64,
     sha256: [u8; 32],
+}
+
+/// Selected artifact bound to the identical fresh Release; it is not downloaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizedArtifact {
+    artifact: IndexedArtifact,
+    release: ValidatedRelease,
+}
+
+/// A verified temporary artifact. The underlying file is not exposed for mutation.
+#[derive(Debug)]
+pub struct VerifiedArtifact {
+    file: std::fs::File,
+    metadata: IndexedArtifact,
+}
+impl VerifiedArtifact {
+    pub fn metadata(&self) -> &IndexedArtifact {
+        &self.metadata
+    }
+}
+impl Read for VerifiedArtifact {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.file.read(buffer)
+    }
+}
+
+/// Stream into a temporary file and return it only after size and SHA256 match.
+/// The caller must enforce network policy and timeout before providing the reader.
+pub fn verify_artifact_stream(
+    authorized: &AuthorizedArtifact,
+    reader: impl Read,
+    max_bytes: u64,
+) -> Result<VerifiedArtifact, ArtifactError> {
+    verify_artifact_stream_with_clock(authorized, reader, max_bytes, SystemTime::now)
+}
+
+pub(crate) fn verify_artifact_stream_with_clock(
+    authorized: &AuthorizedArtifact,
+    mut reader: impl Read,
+    max_bytes: u64,
+    clock: impl Fn() -> SystemTime,
+) -> Result<VerifiedArtifact, ArtifactError> {
+    if !authorized.is_valid_at(clock()) {
+        return Err(ArtifactError::StaleOrMismatchedRelease);
+    }
+    let metadata = authorized.artifact();
+    if max_bytes == 0 || metadata.size > max_bytes {
+        return Err(ArtifactError::Unsupported);
+    }
+    let mut file = tempfile::tempfile().map_err(|_| ArtifactError::Io)?;
+    let mut sha = Sha256::new();
+    let mut count = 0u64;
+    let mut buffer = [0u8; 65536];
+    loop {
+        let remaining = metadata.size - count;
+        let length = buffer
+            .len()
+            .min(usize::try_from(remaining.saturating_add(1)).unwrap_or(usize::MAX));
+        let n = reader
+            .read(&mut buffer[..length])
+            .map_err(|_| ArtifactError::Io)?;
+        if n > length {
+            return Err(ArtifactError::Io);
+        }
+        if n == 0 {
+            break;
+        }
+        count = count
+            .checked_add(n as u64)
+            .ok_or(ArtifactError::Integrity)?;
+        if count > metadata.size {
+            return Err(ArtifactError::Integrity);
+        }
+        sha.update(&buffer[..n]);
+        file.write_all(&buffer[..n])
+            .map_err(|_| ArtifactError::Io)?;
+    }
+    let digest: [u8; 32] = sha.finalize().into();
+    if count != metadata.size || digest != metadata.sha256 {
+        return Err(ArtifactError::Integrity);
+    }
+    if !authorized.is_valid_at(clock()) {
+        return Err(ArtifactError::StaleOrMismatchedRelease);
+    }
+    file.seek(SeekFrom::Start(0))
+        .map_err(|_| ArtifactError::Io)?;
+    Ok(VerifiedArtifact {
+        file,
+        metadata: metadata.clone(),
+    })
+}
+impl AuthorizedArtifact {
+    pub fn artifact(&self) -> &IndexedArtifact {
+        &self.artifact
+    }
+    pub fn is_valid_at(&self, now: SystemTime) -> bool {
+        self.release.is_valid_at(now)
+    }
+}
+
+/// Bind indexed metadata to the identical Release after source and time validation.
+pub fn authorize_artifact(
+    release: &ValidatedRelease,
+    artifact: &IndexedArtifact,
+    now: SystemTime,
+) -> Result<AuthorizedArtifact, ArtifactError> {
+    let digest: [u8; 32] = Sha256::digest(release.release().contents()).into();
+    if !release.is_valid_at(now)
+        || release.source() != &artifact.source
+        || digest != artifact.release_digest
+    {
+        return Err(ArtifactError::StaleOrMismatchedRelease);
+    }
+    Ok(AuthorizedArtifact {
+        artifact: artifact.clone(),
+        release: release.clone(),
+    })
 }
 impl IndexedArtifact {
     pub fn name(&self) -> &str {
@@ -96,6 +223,7 @@ pub fn select_indexed_artifact(
         }
         selected = Some(IndexedArtifact {
             source: index.source.clone(),
+            release_digest: index.release_digest,
             name: name.to_owned(),
             version: version.to_owned(),
             architecture: arch.to_owned(),
@@ -171,6 +299,7 @@ mod tests {
             let index = VerifiedIndex {
                 contents: bad.into_bytes(),
                 source: source.clone(),
+                release_digest: [0; 32],
             };
             assert!(select_indexed_artifact(&index, "fixture", "1.0-1").is_err());
         }

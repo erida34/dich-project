@@ -1,11 +1,15 @@
 #![cfg(target_os = "linux")]
 use dich_apt::{
-    Distribution, IndexFormat, IndexLimits, SourcePolicy, import_sources, select_indexed_artifact,
-    verify_configured_inrelease, verify_packages_index, verify_packages_index_with_limits,
+    Distribution, FreshnessPolicy, IndexFormat, IndexLimits, SourcePolicy, authorize_artifact,
+    import_sources, select_indexed_artifact, validate_release, verify_configured_inrelease,
+    verify_packages_index, verify_packages_index_with_limits,
 };
-use std::fs;
+use std::{
+    fs,
+    time::{Duration, UNIX_EPOCH},
+};
 
-const KEY: &str = "AC28462BC0706B3E3B7B09B179BAD7CBF042F23A";
+const KEY: &str = "9DDAB0BA30893BBE88A2E583BBBAC55DCA1F9AA8";
 const CLEAR: &[u8] = include_bytes!("fixtures/index/InRelease");
 const GZIP: &[u8] = include_bytes!("fixtures/index/Packages.gz");
 const XZ: &[u8] = include_bytes!("fixtures/index/Packages.xz");
@@ -27,6 +31,30 @@ fn selects_only_artifacts_from_authenticated_index_metadata() {
     );
     assert!(select_indexed_artifact(&index, "fixture", "1.0-2").is_err());
     assert!(select_indexed_artifact(&index, "../fixture", "1.0-1").is_err());
+}
+
+#[test]
+fn artifact_authorization_requires_fresh_same_release() {
+    let (_dir, release) = verified_release();
+    let index = verify_packages_index(&release, "main", IndexFormat::Gzip, GZIP).unwrap();
+    let artifact = select_indexed_artifact(&index, "fixture", "1.0-1").unwrap();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    let policy = FreshnessPolicy::new(
+        Duration::from_secs(2 * 86400),
+        Duration::from_secs(300),
+        true,
+    )
+    .unwrap();
+    let fresh = validate_release(&release, now, policy).unwrap();
+    assert!(authorize_artifact(&fresh, &artifact, now).is_ok());
+    assert!(authorize_artifact(&fresh, &artifact, now + Duration::from_secs(2 * 86400)).is_err());
+    let alternate = verify_configured_inrelease(
+        release.source(),
+        include_bytes!("fixtures/index/Alternate.InRelease"),
+    )
+    .unwrap();
+    let alternate = validate_release(&alternate, now, policy).unwrap();
+    assert!(authorize_artifact(&alternate, &artifact, now).is_err());
 }
 
 fn verified_release() -> (tempfile::TempDir, dich_apt::VerifiedRelease) {

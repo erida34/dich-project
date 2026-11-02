@@ -1,5 +1,7 @@
-Origin: Fixture
+Origin: Debian
 Suite: bookworm
+Date: Mon, 02 Nov 2026 12:00:00 UTC
+Valid-Until: Wed, 04 Nov 2026 12:00:00 UTC
 SHA256:
  3ab288399f5996480ec963a74b338f7b31af60d5b93aa9db3765b9936c0a8a17 171 main/binary-amd64/Packages.gz
  fa184974c07c71db02266b3a06849f8804e9e3930963a90102136ccabf99d0a5 224 main/binary-amd64/Packages.xz

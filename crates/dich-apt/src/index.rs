@@ -63,6 +63,7 @@ impl Error for IndexError {}
 pub struct VerifiedIndex {
     pub(crate) contents: Vec<u8>,
     pub(crate) source: crate::Source,
+    pub(crate) release_digest: [u8; 32],
 }
 impl VerifiedIndex {
     pub fn contents(&self) -> &[u8] {
@@ -123,6 +124,7 @@ pub fn verify_packages_index_with_limits(
     Ok(VerifiedIndex {
         contents,
         source: release.source().clone(),
+        release_digest: Sha256::digest(release.contents()).into(),
     })
 }
 

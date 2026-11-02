@@ -1,0 +1,23 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Label: Different snapshot
+Origin: Debian
+Suite: bookworm
+Date: Mon, 02 Nov 2026 12:00:00 UTC
+Valid-Until: Wed, 04 Nov 2026 12:00:00 UTC
+SHA256:
+ 3ab288399f5996480ec963a74b338f7b31af60d5b93aa9db3765b9936c0a8a17 171 main/binary-amd64/Packages.gz
+ fa184974c07c71db02266b3a06849f8804e9e3930963a90102136ccabf99d0a5 224 main/binary-amd64/Packages.xz
+ d65430fc20cba67ec576db4520e0ccb447f1c0b35d201f5f3fe29c85ab876a23 17358 bomb/binary-amd64/Packages.gz
+ 25fdaa133b07eb14a91ce9699afedf0b3a18342f88213140f29987813fb75603 2724 bomb/binary-amd64/Packages.xz
+ 094f2536b359e80d1fd82e8ecea946dcc24a2b2afa307865d1d3a6436777cb51 166 broken/binary-amd64/Packages.gz
+ bd78a3aaf727e40b7e81ea4196a11e95a70533df21347a9d1b175484014f33e4 219 broken/binary-amd64/Packages.xz
+ 529cc499c9ddacd3e968c5f351939ab4957ecac06877a0a3fdb41b0848520996 194 trailing/binary-amd64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iHUEARYKAB0WIQSd2rC6MIk7voii5YO7usVdyh+aqAUCaujoagAKCRC7usVdyh+a
+qIJrAQC+DFWPaKWB9ZUMArCqf7QelU0CrbMq1XTnnejBF7JhFwEAmhJVJtsj32ZJ
+nPiVsb6o39J5nk3U+vxtV80QEtm4+gU=
+=0BYV
+-----END PGP SIGNATURE-----

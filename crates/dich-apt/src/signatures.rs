@@ -23,7 +23,7 @@ impl fmt::Display for SignatureError {
 impl Error for SignatureError {}
 
 /// Signature-verified bytes only; expiry, identity and checksums are not yet checked.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedRelease {
     contents: Vec<u8>,
     signing_fingerprint: String,
