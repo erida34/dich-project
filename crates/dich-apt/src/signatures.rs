@@ -27,6 +27,7 @@ impl Error for SignatureError {}
 pub struct VerifiedRelease {
     contents: Vec<u8>,
     signing_fingerprint: String,
+    signing_fingerprints: Vec<String>,
 }
 impl VerifiedRelease {
     pub fn contents(&self) -> &[u8] {
@@ -34,6 +35,10 @@ impl VerifiedRelease {
     }
     pub fn signing_fingerprint(&self) -> &str {
         &self.signing_fingerprint
+    }
+    /// Every verified signer, in gpgv status order.
+    pub fn signing_fingerprints(&self) -> &[String] {
+        &self.signing_fingerprints
     }
 }
 
@@ -206,7 +211,11 @@ fn verify(
         return Err(SignatureError::VerificationFailed);
     }
     let status_bytes = read_bounded(&status_path, 256 * 1024)?;
-    let signer = parse_status(source, &status_bytes)?;
+    let signers = parse_status(source, &status_bytes)?;
+    let signer = signers
+        .first()
+        .cloned()
+        .ok_or(SignatureError::VerificationFailed)?;
     let contents = if signature.is_some() {
         input.to_vec()
     } else {
@@ -218,6 +227,7 @@ fn verify(
     Ok(VerifiedRelease {
         contents,
         signing_fingerprint: signer,
+        signing_fingerprints: signers,
     })
 }
 
@@ -236,18 +246,19 @@ fn read_bounded(path: &std::path::Path, limit: usize) -> Result<Vec<u8>, Signatu
 }
 
 #[cfg(target_os = "linux")]
-fn parse_status(source: &Source, bytes: &[u8]) -> Result<String, SignatureError> {
+fn parse_status(source: &Source, bytes: &[u8]) -> Result<Vec<String>, SignatureError> {
     let text = std::str::from_utf8(bytes).map_err(|_| SignatureError::VerificationFailed)?;
-    let mut valid = None;
-    let mut new_signatures = 0;
-    let mut good_signatures = 0;
+    let mut signers = Vec::new();
+    let mut in_signature = false;
+    let mut good = false;
+    let mut valid = false;
     for line in text.lines() {
         let line = line
             .strip_prefix("[GNUPG:] ")
             .ok_or(SignatureError::VerificationFailed)?;
         let fields: Vec<&str> = line.split_ascii_whitespace().collect();
         match fields.first().copied() {
-            Some("VALIDSIG") if fields.len() == 11 && valid.is_none() => {
+            Some("VALIDSIG") if fields.len() == 11 && in_signature && good && !valid => {
                 if !matches!(fields[8], "8" | "9" | "10" | "11") {
                     return Err(SignatureError::VerificationFailed);
                 }
@@ -262,16 +273,27 @@ fn parse_status(source: &Source, bytes: &[u8]) -> Result<String, SignatureError>
                 if !allowed {
                     return Err(SignatureError::UntrustedSigner);
                 }
-                valid = Some(signer.to_owned());
+                if signers.iter().any(|previous| previous == signer) {
+                    return Err(SignatureError::VerificationFailed);
+                }
+                signers.push(signer.to_owned());
+                valid = true;
             }
-            Some("NEWSIG") => new_signatures += 1,
-            Some("GOODSIG") => good_signatures += 1,
+            Some("NEWSIG") => {
+                if in_signature && (!good || !valid) {
+                    return Err(SignatureError::VerificationFailed);
+                }
+                in_signature = true;
+                good = false;
+                valid = false;
+            }
+            Some("GOODSIG") if in_signature && !good && !valid => good = true,
             Some("PLAINTEXT" | "KEY_CONSIDERED" | "SIG_ID") => (),
             _ => return Err(SignatureError::VerificationFailed),
         }
     }
-    if new_signatures != 1 || good_signatures != 1 {
+    if !in_signature || !good || !valid || signers.is_empty() {
         return Err(SignatureError::VerificationFailed);
     }
-    valid.ok_or(SignatureError::VerificationFailed)
+    Ok(signers)
 }

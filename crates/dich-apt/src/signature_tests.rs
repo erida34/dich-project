@@ -141,6 +141,33 @@ fn rejects_multiple_signatures_instead_of_choosing_an_ambiguous_result() {
 }
 
 #[test]
+fn accepts_multiple_signatures_only_when_all_signers_are_authorized() {
+    let policy = SourcePolicy::new(
+        Distribution::Debian,
+        "https://deb.debian.org/debian",
+        "bookworm",
+        &["main"],
+        "amd64",
+        "/etc/dich/test.gpg",
+        &[
+            "0E9EAD0C974F7C3A3ABD1C0C9E5699515F5745A0",
+            "432AAFF25D89B513E5B512B599D2063872768B03",
+        ],
+    )
+    .unwrap();
+    let input = "Types: deb\nURIs: https://deb.debian.org/debian\nSuites: bookworm\nComponents: main\nSigned-By: /etc/dich/test.gpg\n";
+    let source = import_sources(input, &policy).unwrap().remove(0);
+    let verified = verify_detached_release(
+        &source,
+        include_bytes!("../tests/fixtures/multiple-keyring.gpg"),
+        RELEASE,
+        include_bytes!("../tests/fixtures/MultiRelease.gpg"),
+    )
+    .unwrap();
+    assert_eq!(verified.signing_fingerprints().len(), 2);
+}
+
+#[test]
 #[ignore = "requires Ubuntu noble cached InRelease and archive keyring on the host"]
 fn ubuntu_noble_cached_repository_signature() {
     let policy = SourcePolicy::new(
