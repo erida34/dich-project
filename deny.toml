@@ -6,8 +6,8 @@ targets = [
 ]
 
 [advisories]
-unmaintained = "all"
-unsound = "all"
+# cargo-deny denies vulnerability, unmaintained, and unsound advisories by default.
+# Keep yanked crates explicitly denied instead of cargo-deny's warning default.
 yanked = "deny"
 ignore = []
 
