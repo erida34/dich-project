@@ -372,3 +372,41 @@ fn rejects_links_devices_extensions_and_ambiguous_paths() {
         assert!(inspect_deb(&bytes, Limits::default()).is_err());
     }
 }
+fn tar_control_with_script(script: &[u8]) -> Vec<u8> {
+    let mut output = Vec::new();
+    {
+        let mut tar = tar::Builder::new(&mut output);
+        for (name, content) in [
+            ("control", b"Package: sample\nVersion: 1\n".as_slice()),
+            ("postinst", script),
+            ("triggers", b"interest sample\n".as_slice()),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            tar.append_data(&mut header, name, content).unwrap();
+        }
+        tar.finish().unwrap();
+    }
+    output
+}
+#[test]
+fn maintainer_scripts_and_triggers_are_reported_as_metadata_only() {
+    let control = tar_control_with_script(b"#!/bin/sh\nexit 42\n");
+    let data = tar_with_file("file", b"data");
+    let bytes = deb(&[
+        ("debian-binary", b"2.0\n"),
+        ("control.tar", &control),
+        ("data.tar", &data),
+    ]);
+    let report = inspect_deb(&bytes, Limits::default()).unwrap();
+    assert_eq!(report.scripts.len(), 1);
+    assert_eq!(report.scripts[0].name, "postinst");
+    assert_eq!(report.scripts[0].size, 18);
+    assert_eq!(
+        report.scripts[0].sha256,
+        "ab1922de0ea536ca66486e5fc9ba328e42af1ed862be932112445998767afc25"
+    );
+    assert!(report.triggers_present);
+}

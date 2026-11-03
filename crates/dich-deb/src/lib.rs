@@ -51,6 +51,12 @@ impl fmt::Display for DebError {
 }
 impl Error for DebError {}
 #[derive(Debug, PartialEq, Eq)]
+pub struct ScriptMetadata {
+    pub name: String,
+    pub size: u64,
+    pub sha256: String,
+}
+#[derive(Debug, PartialEq, Eq)]
 pub struct ArchiveReport {
     pub control_entries: usize,
     pub data_entries: usize,
@@ -58,6 +64,8 @@ pub struct ArchiveReport {
     pub data_files: usize,
     pub control_file_bytes: u64,
     pub data_file_bytes: u64,
+    pub scripts: Vec<ScriptMetadata>,
+    pub triggers_present: bool,
 }
 
 /// Inspect a bounded .deb; no authenticity or installability is implied.
@@ -98,8 +106,9 @@ pub fn inspect_deb(bytes: &[u8], limits: Limits) -> Result<ArchiveReport, DebErr
     }
     let control = decompress(formats[0], &members[1], limits.max_expanded_tar_bytes)?;
     let data = decompress(formats[1], &members[2], limits.max_expanded_tar_bytes)?;
-    let (control_entries, control_files, control_file_bytes) = inspect_tar(&control, limits, true)?;
-    let (data_entries, data_files, data_file_bytes) = inspect_tar(&data, limits, false)?;
+    let (control_entries, control_files, control_file_bytes, scripts, triggers_present) =
+        inspect_tar(&control, limits, true)?;
+    let (data_entries, data_files, data_file_bytes, _, _) = inspect_tar(&data, limits, false)?;
     if control_entries
         .checked_add(data_entries)
         .ok_or(DebError::Limit)?
@@ -122,6 +131,8 @@ pub fn inspect_deb(bytes: &[u8], limits: Limits) -> Result<ArchiveReport, DebErr
         data_files,
         control_file_bytes,
         data_file_bytes,
+        scripts,
+        triggers_present,
     })
 }
 
@@ -201,7 +212,7 @@ fn inspect_tar(
     bytes: &[u8],
     limits: Limits,
     control: bool,
-) -> Result<(usize, usize, u64), DebError> {
+) -> Result<(usize, usize, u64, Vec<ScriptMetadata>, bool), DebError> {
     if bytes.len() < 1024 || bytes.len() % 512 != 0 {
         return Err(DebError::Malformed);
     }
@@ -210,6 +221,8 @@ fn inspect_tar(
     let mut total = 0u64;
     let mut files = 0usize;
     let mut control_files = 0usize;
+    let mut scripts = Vec::new();
+    let mut triggers_present = false;
     let mut paths: std::collections::BTreeMap<Vec<u8>, bool> = std::collections::BTreeMap::new();
     {
         let entries = archive
@@ -254,6 +267,24 @@ fn inspect_tar(
                     return Err(DebError::Malformed);
                 }
             }
+            let metadata_name = if control && kind.is_file() {
+                match normalized.as_slice() {
+                    b"preinst" => Some("preinst"),
+                    b"postinst" => Some("postinst"),
+                    b"prerm" => Some("prerm"),
+                    b"postrm" => Some("postrm"),
+                    b"config" => Some("config"),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if control && normalized == b"triggers" {
+                if !kind.is_file() {
+                    return Err(DebError::Malformed);
+                }
+                triggers_present = true;
+            }
             paths.insert(normalized, kind.is_dir());
             if kind.is_file() {
                 files = files.checked_add(1).ok_or(DebError::Limit)?;
@@ -275,8 +306,33 @@ fn inspect_tar(
             if total > limits.max_total_file_bytes {
                 return Err(DebError::Limit);
             }
-            let copied =
-                std::io::copy(&mut entry, &mut std::io::sink()).map_err(|_| DebError::Malformed)?;
+            let copied = if let Some(name) = metadata_name {
+                use sha2::{Digest, Sha256};
+                let mut digest = Sha256::new();
+                let mut buf = [0u8; 8192];
+                let mut count = 0u64;
+                loop {
+                    let read = entry.read(&mut buf).map_err(|_| DebError::Malformed)?;
+                    if read == 0 {
+                        break;
+                    }
+                    digest.update(&buf[..read]);
+                    count = count.checked_add(read as u64).ok_or(DebError::Limit)?;
+                }
+                let hash: String = digest
+                    .finalize()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect();
+                scripts.push(ScriptMetadata {
+                    name: name.into(),
+                    size: count,
+                    sha256: hash,
+                });
+                count
+            } else {
+                std::io::copy(&mut entry, &mut std::io::sink()).map_err(|_| DebError::Malformed)?
+            };
             if copied != size {
                 return Err(DebError::Malformed);
             }
@@ -292,7 +348,7 @@ fn inspect_tar(
     if control && control_files != 1 {
         return Err(DebError::Malformed);
     }
-    Ok((count, files, total))
+    Ok((count, files, total, scripts, triggers_present))
 }
 
 fn normalize_path(path: &[u8], directory: bool) -> Result<Vec<u8>, DebError> {
@@ -578,5 +634,52 @@ mod staging_tests {
         });
         assert!(result.is_err());
         assert_eq!(std::fs::read(target).unwrap(), b"original");
+    }
+    #[test]
+    fn staging_never_executes_control_scripts() {
+        let outside = tempfile::tempdir().unwrap();
+        let marker = outside.path().join("executed");
+        let script = format!("#!/bin/sh\ntouch {}\n", marker.display());
+        let mut control = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut control);
+            for (name, content) in [
+                ("control", b"metadata".as_slice()),
+                ("postinst", script.as_bytes()),
+            ] {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(content.len() as u64);
+                header.set_mode(0o755);
+                header.set_cksum();
+                builder.append_data(&mut header, name, content).unwrap();
+            }
+            builder.finish().unwrap();
+        }
+        let existing = sample("usr/share/example", b"data");
+        let mut input = ar::Archive::new(Cursor::new(existing));
+        let mut payload = Vec::new();
+        for index in 0..3 {
+            let mut entry = input.next_entry().unwrap().unwrap();
+            if index == 2 {
+                std::io::Read::read_to_end(&mut entry, &mut payload).unwrap();
+            }
+        }
+        let mut archive = Vec::new();
+        {
+            let mut builder = ar::Builder::new(&mut archive);
+            for (name, content) in [
+                ("debian-binary", b"2.0\n".as_slice()),
+                ("control.tar", control.as_slice()),
+                ("data.tar", payload.as_slice()),
+            ] {
+                let header = ar::Header::new(name.as_bytes().to_vec(), content.len() as u64);
+                builder.append(&header, Cursor::new(content)).unwrap();
+            }
+        }
+        let stage = crate::staging::stage_untrusted_for_test(&archive, Limits::default()).unwrap();
+        assert!(!marker.exists());
+        assert_eq!(stage.report().scripts[0].name, "postinst");
+        assert!(stage.open_file("postinst").is_err());
+        assert!(stage.open_file("usr/share/example").is_ok());
     }
 }

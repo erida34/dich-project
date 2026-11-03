@@ -9,4 +9,5 @@
 - Explicit deny-all execution admission for unexamined or unsupported package actions.
 - Added bounded, read-only Debian archive inspection for uncompressed, gzip, xz and zstd members; no extraction.
 - Added Linux-only private staging of verified cached artifacts with conservative archive and path rejection; no store activation.
+- Record known maintainer script hashes and trigger-file presence without executing scripts.
 - Project definition, developer guide, Rust workspace stub, documentation and release-pipeline scaffold.

@@ -1,5 +1,7 @@
 //! Private staging, never publication or package activation.
-use crate::{DebError, Limits, decompress, inspect_deb, normalize_path, preflight_ar};
+use crate::{
+    ArchiveReport, DebError, Limits, decompress, inspect_deb, normalize_path, preflight_ar,
+};
 use dich_apt::{AuthorizedArtifact, SnapshotJournal};
 use rustix::fs::{self, Mode, OFlags, ResolveFlags};
 use std::{
@@ -26,8 +28,13 @@ impl Error for StageError {}
 pub struct StagedArchive {
     _directory: tempfile::TempDir,
     root: std::os::fd::OwnedFd,
+    report: ArchiveReport,
 }
 impl StagedArchive {
+    /// Archive metadata, including script hashes and trigger presence; never an execution permit.
+    pub fn report(&self) -> &ArchiveReport {
+        &self.report
+    }
     /// Read a regular staged file without resolving a host path or following links.
     pub fn open_file(&self, path: &str) -> Result<std::fs::File, StageError> {
         let normalized = normalize_path(path.as_bytes(), false).map_err(StageError::Archive)?;
@@ -104,7 +111,7 @@ fn stage_with_hook(
     limits: Limits,
     hook: impl FnOnce(&Path),
 ) -> Result<StagedArchive, StageError> {
-    inspect_deb(bytes, limits).map_err(StageError::Archive)?;
+    let report = inspect_deb(bytes, limits).map_err(StageError::Archive)?;
     let formats = preflight_ar(bytes).map_err(StageError::Archive)?;
     let mut archive = ar::Archive::new(Cursor::new(bytes));
     let mut data = None;
@@ -215,6 +222,7 @@ fn stage_with_hook(
     Ok(StagedArchive {
         _directory: directory,
         root,
+        report,
     })
 }
 fn check_attached(
