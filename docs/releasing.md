@@ -13,8 +13,21 @@ Use semver tags `vX.Y.Z`, update changelog, validate the exact release commit, b
 ## GitHub Actions
 `ci.yml` runs Rust checks and docs; `release.yml` builds amd64 `.deb` on a Linux runner, smoke-tests in Debian trixie and Ubuntu 24.04 containers, publishes artifact + SHA256SUMS. Actions and test-image manifests are pinned to immutable SHA256/commit identifiers, and `cargo-deb` is pinned to version 3.8.0. The workflow explicitly includes Dich man pages because slim images exclude them by default. The actual hosted workflow and release assets remain unverified until run; ensure repository permissions and release protection rules are configured. Publishing artifacts is deliberately limited to `v*` tags. No GPG signing/attestation is asserted by the scaffold.
 
-## Required before v1
-Versioned state migration, supported distro matrix, signed provenance strategy, SBOM, dependency audits, reproducibility investigation, real install/rollback/GC tests and private vulnerability disclosure process.
+## Release Artifacts and Architecture Policy
+
+1. **Architecture Scope**:
+   - `amd64` (x86_64) is the primary verified target.
+   - `arm64` is deferred until native runner verification and container smoke testing are integrated; no unverified cross-compiled binaries are published (ADR 0038).
+
+2. **Published Assets on GitHub Releases**:
+   - `dich_<version>_amd64.deb`: Debian package.
+   - `SHA256SUMS`: SHA-256 digests of all released files.
+   - `dich.spdx.json`: Machine-readable SPDX 2.3 Software Bill of Materials.
+   - Cryptographic build provenance attestations generated via `actions/attest-build-provenance`.
+
+3. **Release Gate Verification**:
+   Before release publication, `.github/workflows/release.yml` builds the release package and executes containerized smoke tests in pinned Debian and Ubuntu base images, verifying installation, manual page indexing, vendor completions, upgrade, and clean removal.
+
 
 ## Opt-in live fetch check
 

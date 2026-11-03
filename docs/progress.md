@@ -155,6 +155,9 @@
 
 - 2026-11-03: Phase 7 CI matrix and clean-container smoke testing milestone verified and checked: updated `.github/workflows/ci.yml` with automated `.deb` packaging via pinned `cargo-deb 3.8.0` and containerized smoke test matrix covering `debian:bookworm-slim`, `debian:trixie-slim`, `ubuntu:22.04`, and `ubuntu:24.04`. Smoke tests verify successful package installation, execution of `/usr/bin/dich --help`, presence of all 19 man pages in `/usr/share/man/man1/` and bash/zsh/fish completions in vendor directories, package upgrade/reinstallation without conflicts, and complete uninstallation (`apt-get remove`) removing `/usr/bin/dich`. Verified `.deb` creation and contents locally. Full workspace checks passed in WSL. Next: Phase 7 Line 70 (Release artifacts for amd64; arm64 only after verified, SHA256SUMS, release notes and verified GitHub Release assets).
 
+- 2026-11-03: Phase 7 release artifact and distribution policy milestone verified and checked (ADR 0038): documented release distribution policy in `docs/releasing.md`. Pinned primary target architecture to Linux `amd64` with `arm64` explicitly deferred until native runner verification. Release assets comprise `dich_<version>_amd64.deb`, `SHA256SUMS`, SPDX 2.3 SBOM (`dich.spdx.json`), and cryptographic build provenance attestations. Full workspace checks passed in WSL. Next: Phase 7 Line 71 (Document migration of store DB format, downgrade and recoverability, data durability and backup/restore).
+
+
 
 
 
