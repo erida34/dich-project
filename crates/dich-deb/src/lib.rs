@@ -43,6 +43,8 @@ pub enum DebError {
     Unsupported,
     HelperUnavailable,
     Decompression,
+    Io,
+    UnsafePath,
 }
 impl fmt::Display for DebError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -134,6 +136,39 @@ pub fn inspect_deb(bytes: &[u8], limits: Limits) -> Result<ArchiveReport, DebErr
         scripts,
         triggers_present,
     })
+}
+
+/// Inspect a bounded regular local file without following symlinks. This does not authenticate it.
+#[cfg(target_os = "linux")]
+pub fn inspect_path(path: &std::path::Path, limits: Limits) -> Result<ArchiveReport, DebError> {
+    use rustix::fs::{self, CWD, FileType, Mode, OFlags, ResolveFlags};
+    if limits.max_archive_bytes == 0 || limits.max_archive_bytes > 256 * 1024 * 1024 {
+        return Err(DebError::Limit);
+    }
+    let fd = fs::openat2(
+        CWD,
+        path,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+    )
+    .map_err(|_| DebError::UnsafePath)?;
+    let stat = fs::fstat(&fd).map_err(|_| DebError::Io)?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile || stat.st_size < 0 {
+        return Err(DebError::UnsafePath);
+    }
+    if stat.st_size as u64 > limits.max_archive_bytes as u64 {
+        return Err(DebError::Limit);
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::from(fd)
+        .take(limits.max_archive_bytes as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| DebError::Io)?;
+    if bytes.len() > limits.max_archive_bytes || bytes.len() as u64 != stat.st_size as u64 {
+        return Err(DebError::Limit);
+    }
+    inspect_deb(&bytes, limits)
 }
 
 /// Block extended ar variants and oversized declared sizes before the library can allocate.

@@ -221,15 +221,18 @@ dependencies = [
 name = "dich-cli"
 version = "0.1.0"
 dependencies = [
+ "ar",
  "clap",
  "clap_complete",
  "clap_mangen",
  "dich-apt",
  "dich-core",
+ "dich-deb",
  "dich-store",
  "rusqlite",
  "serde_json",
  "sha2",
+ "tar",
  "tempfile",
 ]
 

@@ -54,7 +54,7 @@ pub enum Commands {
     },
     /// Download a verified package (planned)
     Fetch { package: String },
-    /// Inspect a local Debian archive (planned)
+    /// Examine an unauthenticated local Debian archive without extracting it
     Inspect { file: String },
     /// Install compatible packages into a profile (planned)
     Install {
@@ -438,6 +438,56 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 Err(CliError {
                     code: "unsupported_platform",
                     message: "repository update requires Linux",
+                    trace: Vec::new(),
+                })
+            }
+        }
+        Commands::Inspect { file } => {
+            #[cfg(target_os = "linux")]
+            {
+                let report = dich_deb::inspect_path(
+                    std::path::Path::new(&file),
+                    dich_deb::Limits::default(),
+                )
+                .map_err(|_| CliError {
+                    code: "inspect_failed",
+                    message: "could not safely inspect local Debian archive",
+                    trace: Vec::new(),
+                })?;
+                if cli.json {
+                    let scripts: Vec<_> = report
+                        .scripts
+                        .iter()
+                        .map(|s| serde_json::json!({"name":s.name,"size":s.size,"sha256":s.sha256}))
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::json!({"schema_version":1,"status":"completed","trust":"unverified","installable":false,"control_entries":report.control_entries,"control_files":report.control_files,"data_entries":report.data_entries,"data_files":report.data_files,"data_file_bytes":report.data_file_bytes,"scripts":scripts,"triggers_present":report.triggers_present})
+                    );
+                } else {
+                    println!("completed: unverified local archive; installability not established");
+                    println!(
+                        "control files: {}; data files: {}; data bytes: {}; triggers: {}",
+                        report.control_files,
+                        report.data_files,
+                        report.data_file_bytes,
+                        report.triggers_present
+                    );
+                    for script in report.scripts {
+                        println!(
+                            "script metadata: {} {} {}",
+                            script.name, script.size, script.sha256
+                        );
+                    }
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = file;
+                Err(CliError {
+                    code: "unsupported_platform",
+                    message: "local archive inspection requires Linux",
                     trace: Vec::new(),
                 })
             }

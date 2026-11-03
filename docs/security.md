@@ -69,3 +69,5 @@ The experimental library tree verifier checks committed local identity and manif
 Stored tree files use mode 0400 and directories 0700; archives use 0400. This is a best-effort convention enforced by verification, not a kernel-enforced immutable store: the owning UID can change permissions or replace contents. Graphs and object records are not GC roots and do not authorize activation.
 
 The experimental `store ls` output is metadata only. `store verify` checks one object against protected local metadata, not against a freshly verified repository snapshot or ABI policy. Both commands require an existing current-schema store and an exclusive lock; SQLite may create or recover WAL sidecars. They do not initialize, migrate or activate a store.
+
+`dich inspect FILE` treats the file as unauthenticated input, reads a bounded regular file without following symlinks, does not extract or execute package scripts, and does not claim installability. It rejects FIFO/device inputs and unsupported archive forms.
