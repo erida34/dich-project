@@ -31,7 +31,18 @@ impl Provider for Graph {
 fn backtracks_deterministically_and_satisfies_cycles() {
     let result = resolve(&Graph, vec!["root"], SearchLimits::default()).unwrap();
     assert_eq!(result.selected, vec!["root", "lib1", "extra"]);
-    assert!(result.trace.iter().any(|s| s.contains("conflict")));
+    assert!(
+        result
+            .trace
+            .iter()
+            .any(|s| s.contains("extra") && s.contains("lib2") && s.contains("conflict"))
+    );
+    assert!(
+        result
+            .trace
+            .iter()
+            .any(|s| s.contains("already selected") && s.contains("root"))
+    );
 }
 
 #[test]

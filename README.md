@@ -2,7 +2,7 @@
 
 **Dich** — a version-aware, dependency-sharing package store for Debian and Ubuntu sources, written in Rust.
 
-> **Status: experimental.** The executable can list configured sources, update authenticated repository metadata and query the verified local cache. Package installation, dependency resolution, immutable store and ABI relocation are not implemented. Do not use it as a production package manager.
+> **Status: experimental.** The executable can list configured sources, update authenticated repository metadata and query the verified local cache. An experimental, limited metadata planner is available for one source; package installation, a complete Debian resolver, immutable store and ABI relocation are not implemented. Do not use it as a production package manager.
 
 ## Vision
 
@@ -38,12 +38,17 @@ dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age
 dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 search openssl
 ```
 
-If the repository omits `Valid-Until`, `--allow-missing-valid-until` explicitly permits it while retaining the maximum-age check. Search is a package-name substring; show and versions require an exact name. Results contain name, version, architecture, source and suite only, and do not establish installability. Queries fail when any configured index is unavailable, stale or invalid. An interrupted or failed update can leave a partial cache; rerun update. Protect the cache and clock: deletion or rollback of the entire cache can defeat its per-source rollback floor. Remaining examples below show the *planned* package interface.
+If the repository omits `Valid-Until`, `--allow-missing-valid-until` explicitly permits it while retaining the maximum-age check. Search is a package-name substring; show and versions require an exact name. Results contain name, version, architecture, source and suite only, and do not establish installability. Queries fail when any configured index is unavailable, stale or invalid. An interrupted or failed update can leave a partial cache; rerun update. Protect the cache and clock: deletion or rollback of the entire cache can defeat its per-source rollback floor. An experimental informational plan requires exactly one configured source and an explicit identity boundary:
+
+```sh
+dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 plan hello --distribution ubuntu --suite noble --architecture amd64
+```
+
+Plans are labeled `planned` and are not installable or pinned to artifacts. The current resolver supports a narrow relationship subset and rejects, among other cases, Pre-Depends, multiarch relationships and essential/required packages; it does not infer host packages. The result may therefore be `unsupported` even for ordinary packages such as `hello`. It does not check scripts, services or ABI compatibility. Remaining examples below show the *planned* package interface.
 
 ## Planned CLI
 
 ```text
-dich plan libssl3@3.0
 dich fetch libssl3@3.0
 dich inspect ./libssl3.deb
 dich install libssl3@3.0 --profile default

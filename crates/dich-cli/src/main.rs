@@ -10,7 +10,8 @@ fn main() {
                 "{}",
                 dich_cli::CliError {
                     code: "invalid_arguments",
-                    message: "invalid command-line arguments"
+                    message: "invalid command-line arguments",
+                    trace: Vec::new()
                 }
                 .render(true)
             );

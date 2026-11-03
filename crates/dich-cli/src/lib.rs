@@ -35,8 +35,20 @@ pub enum Commands {
     Show { package: String },
     /// List cached package versions
     Versions { package: String },
-    /// Show dependency plan (planned)
-    Plan { package: String },
+    /// Show an experimental, non-installable metadata dependency plan
+    Plan {
+        /// Exact package name
+        package: String,
+        /// Distribution identity: debian or ubuntu
+        #[arg(long)]
+        distribution: String,
+        /// Immutable literal suite label
+        #[arg(long)]
+        suite: String,
+        /// Native architecture for the plan
+        #[arg(long)]
+        architecture: String,
+    },
     /// Download a verified package (planned)
     Fetch { package: String },
     /// Inspect a local Debian archive (planned)
@@ -100,25 +112,36 @@ pub enum SourcesCommands {
 pub struct CliError {
     pub code: &'static str,
     pub message: &'static str,
+    pub trace: Vec<String>,
 }
 impl CliError {
     pub fn render(&self, json: bool) -> String {
         if json {
-            serde_json::json!({"schema_version": 1, "status": "error", "error": {"code": self.code, "message": self.message}}).to_string()
+            serde_json::json!({"schema_version": 1, "status": "error", "error": {"code": self.code, "message": self.message, "trace": self.trace}}).to_string()
         } else {
-            format!("dich: error: {}", self.message)
+            if self.trace.is_empty() {
+                format!("dich: error: {}", self.message)
+            } else {
+                format!("dich: error: {}\n{}", self.message, self.trace.join("\n"))
+            }
         }
     }
 }
 
 pub fn run(cli: Cli) -> Result<(), CliError> {
     match cli.command {
-        command @ (Commands::Search { .. } | Commands::Show { .. } | Commands::Versions { .. }) => {
+        Commands::Plan {
+            package,
+            distribution,
+            suite,
+            architecture,
+        } => {
             #[cfg(target_os = "linux")]
             {
                 let age = cli.max_age_seconds.ok_or(CliError {
                     code: "freshness_policy_required",
                     message: "specify --max-age-seconds explicitly",
+                    trace: Vec::new(),
                 })?;
                 let freshness = dich_apt::FreshnessPolicy::new(
                     std::time::Duration::from_secs(age),
@@ -128,15 +151,137 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 .map_err(|_| CliError {
                     code: "invalid_freshness_policy",
                     message: "invalid metadata freshness policy",
+                    trace: Vec::new(),
+                })?;
+                let distribution = match distribution.as_str() {
+                    "debian" => dich_core::Distribution::Debian,
+                    "ubuntu" => dich_core::Distribution::Ubuntu,
+                    _ => {
+                        return Err(CliError {
+                            code: "invalid_policy",
+                            message: "distribution must be debian or ubuntu",
+                            trace: Vec::new(),
+                        });
+                    }
+                };
+                let policy =
+                    dich_core::ArchitecturePolicy::new(distribution, &suite, &architecture)
+                        .map_err(|_| CliError {
+                            code: "invalid_policy",
+                            message: "invalid release or architecture policy",
+                            trace: Vec::new(),
+                        })?;
+                let sources =
+                    dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
+                        code: "source_load_failed",
+                        message: "could not load trusted source configuration",
+                        trace: Vec::new(),
+                    })?;
+                if sources.len() != 1 {
+                    return Err(CliError {
+                        code: "unsupported_sources",
+                        message: "planning currently requires exactly one configured source",
+                        trace: Vec::new(),
+                    });
+                }
+                let journal =
+                    dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
+                        code: "cache_open_failed",
+                        message: "could not open protected cache directory",
+                        trace: Vec::new(),
+                    })?;
+                let universe = dich_apt::AuthenticatedUniverse::load(
+                    &sources[0],
+                    &journal,
+                    freshness,
+                    &policy,
+                )
+                .map_err(|_| CliError {
+                    code: "plan_input_failed",
+                    message: "could not load authenticated metadata under the requested policy",
+                    trace: Vec::new(),
+                })?;
+                let plan = universe.plan(&journal, &package).map_err(|e| match e {
+                    dich_apt::PlanError::Unsupported(trace) => CliError {
+                        code: "unsupported",
+                        message: "dependency semantics or system packages are unsupported",
+                        trace,
+                    },
+                    dich_apt::PlanError::Unsatisfiable(trace) => CliError {
+                        code: "unsatisfiable",
+                        message: "no matching dependency solution",
+                        trace,
+                    },
+                    dich_apt::PlanError::Limit => CliError {
+                        code: "search_limit",
+                        message: "dependency search limit exceeded",
+                        trace: Vec::new(),
+                    },
+                    dich_apt::PlanError::InvalidRequest => CliError {
+                        code: "invalid_arguments",
+                        message: "invalid package name",
+                        trace: Vec::new(),
+                    },
+                    dich_apt::PlanError::Cache => CliError {
+                        code: "plan_input_failed",
+                        message: "cached metadata changed or could not be authenticated",
+                        trace: Vec::new(),
+                    },
+                })?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"schema_version":1,"status":"planned","scope":"metadata_only_not_installable","packages":plan.packages,"trace":plan.trace})
+                    );
+                } else {
+                    println!("planned: metadata only; not installable");
+                    for item in plan.packages {
+                        println!("{item}");
+                    }
+                    for event in plan.trace {
+                        println!("  {event}");
+                    }
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (package, distribution, suite, architecture);
+                Err(CliError {
+                    code: "unsupported_platform",
+                    message: "planning requires Linux",
+                    trace: Vec::new(),
+                })
+            }
+        }
+        command @ (Commands::Search { .. } | Commands::Show { .. } | Commands::Versions { .. }) => {
+            #[cfg(target_os = "linux")]
+            {
+                let age = cli.max_age_seconds.ok_or(CliError {
+                    code: "freshness_policy_required",
+                    message: "specify --max-age-seconds explicitly",
+                    trace: Vec::new(),
+                })?;
+                let freshness = dich_apt::FreshnessPolicy::new(
+                    std::time::Duration::from_secs(age),
+                    std::time::Duration::from_secs(300),
+                    !cli.allow_missing_valid_until,
+                )
+                .map_err(|_| CliError {
+                    code: "invalid_freshness_policy",
+                    message: "invalid metadata freshness policy",
+                    trace: Vec::new(),
                 })?;
                 let sources =
                     dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
                         code: "source_load_failed",
                         message: "could not load trusted source configuration",
+                        trace: Vec::new(),
                     })?;
                 let cache = dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
                     code: "cache_open_failed",
                     message: "could not open protected cache directory",
+                    trace: Vec::new(),
                 })?;
                 let query = match &command {
                     Commands::Search { query } => dich_apt::Query::Search(query),
@@ -146,6 +291,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         return Err(CliError {
                             code: "invalid_arguments",
                             message: "invalid query command",
+                            trace: Vec::new(),
                         });
                     }
                 };
@@ -154,12 +300,14 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         CliError {
                             code: "query_failed",
                             message: "could not read complete authenticated cached metadata",
+                            trace: Vec::new(),
                         }
                     })?;
                 if records.is_empty() && !matches!(command, Commands::Search { .. }) {
                     return Err(CliError {
                         code: "not_found",
                         message: "package not found in configured cached sources",
+                        trace: Vec::new(),
                     });
                 }
                 if cli.json {
@@ -188,6 +336,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 Err(CliError {
                     code: "unsupported_platform",
                     message: "cached queries require Linux",
+                    trace: Vec::new(),
                 })
             }
         }
@@ -197,6 +346,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 let age = cli.max_age_seconds.ok_or(CliError {
                     code: "freshness_policy_required",
                     message: "specify --max-age-seconds explicitly",
+                    trace: Vec::new(),
                 })?;
                 let freshness = dich_apt::FreshnessPolicy::new(
                     std::time::Duration::from_secs(age),
@@ -206,15 +356,18 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 .map_err(|_| CliError {
                     code: "invalid_freshness_policy",
                     message: "invalid metadata freshness policy",
+                    trace: Vec::new(),
                 })?;
                 let sources =
                     dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
                         code: "source_load_failed",
                         message: "could not load trusted source configuration",
+                        trace: Vec::new(),
                     })?;
                 let cache = dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
                     code: "cache_open_failed",
                     message: "could not open protected cache directory",
+                    trace: Vec::new(),
                 })?;
                 let mut indices = 0usize;
                 for source in &sources {
@@ -227,6 +380,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     .map_err(|_| CliError {
                         code: "update_failed",
                         message: "repository update failed; earlier cache entries may have changed",
+                        trace: Vec::new(),
                     })?;
                     indices += report.indices;
                 }
@@ -245,6 +399,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 Err(CliError {
                     code: "unsupported_platform",
                     message: "repository update requires Linux",
+                    trace: Vec::new(),
                 })
             }
         }
@@ -254,6 +409,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
             let sources = dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
                 code: "source_load_failed",
                 message: "could not load trusted source configuration",
+                trace: Vec::new(),
             })?;
             if cli.json {
                 let entries: Vec<_> = sources.iter().map(|source| serde_json::json!({
@@ -282,6 +438,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         _ => Err(CliError {
             code: "not_implemented",
             message: "not implemented: this operation is not supported",
+            trace: Vec::new(),
         }),
     }
 }

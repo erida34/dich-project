@@ -213,6 +213,7 @@ dependencies = [
  "clap_complete",
  "clap_mangen",
  "dich-apt",
+ "dich-core",
  "serde_json",
  "tempfile",
 ]

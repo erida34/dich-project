@@ -20,4 +20,9 @@ fn loads_real_ubuntu_noble_cache_under_explicit_policy() {
     let policy = ArchitecturePolicy::new(Distribution::Ubuntu, "noble", "amd64").unwrap();
     let universe = AuthenticatedUniverse::load(&sources[0], &journal, freshness, &policy).unwrap();
     assert!(universe.package_count() > 1000);
+    let result = universe.plan(&journal, "hello");
+    assert!(
+        matches!(result, Err(dich_apt::PlanError::Unsupported(_))),
+        "{result:?}"
+    );
 }

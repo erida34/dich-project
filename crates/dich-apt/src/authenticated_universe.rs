@@ -1,9 +1,12 @@
 //! Load a bounded candidate dataset from one authenticated, policy-matched cache snapshot.
 use crate::{
-    DebianUniverse, FreshnessPolicy, IndexLimits, SnapshotJournal, Source, check_release_policy,
-    choose_index_format, parse_control_stanzas,
+    DebianUniverse, FreshnessPolicy, IndexLimits, SnapshotJournal, Source, ValidatedRelease,
+    check_release_policy, choose_index_format, parse_control_stanzas,
 };
-use dich_core::ArchitecturePolicy;
+use dich_core::{
+    ArchitecturePolicy,
+    resolver::{ResolveError, SearchLimits, resolve},
+};
 use std::{error::Error, fmt, time::SystemTime};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,9 +23,26 @@ impl fmt::Display for UniverseLoadError {
 }
 impl Error for UniverseLoadError {}
 
-/// Verified metadata dataset only. It is not a plan and does not authorize installation.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PlanError {
+    InvalidRequest,
+    Cache,
+    Limit,
+    Unsupported(Vec<String>),
+    Unsatisfiable(Vec<String>),
+}
+#[derive(Debug, PartialEq, Eq)]
+pub struct MetadataPlan {
+    pub packages: Vec<String>,
+    pub trace: Vec<String>,
+}
+
+/// A metadata dataset; plans do not authorize fetching or installation.
 pub struct AuthenticatedUniverse {
     universe: DebianUniverse,
+    source: Source,
+    freshness: FreshnessPolicy,
+    release: ValidatedRelease,
 }
 impl AuthenticatedUniverse {
     pub fn load(
@@ -78,7 +98,80 @@ impl AuthenticatedUniverse {
         {
             return Err(UniverseLoadError::Cache);
         }
-        Ok(Self { universe })
+        Ok(Self {
+            universe,
+            source: source.clone(),
+            freshness,
+            release,
+        })
+    }
+    fn recheck(
+        &self,
+        journal: &SnapshotJournal,
+        clock: &impl Fn() -> SystemTime,
+    ) -> Result<(), PlanError> {
+        let release = journal
+            .load_release_with_clock(&self.source, self.freshness, clock)
+            .map_err(|_| PlanError::Cache)?;
+        if !self.release.is_valid_at(clock())
+            || release.release().contents() != self.release.release().contents()
+        {
+            return Err(PlanError::Cache);
+        }
+        for component in self.source.components() {
+            let format =
+                choose_index_format(&self.release, component).map_err(|_| PlanError::Cache)?;
+            let (indexed, _) = journal
+                .load_index_with_clock(
+                    &self.source,
+                    self.freshness,
+                    component,
+                    format,
+                    IndexLimits::default(),
+                    clock,
+                )
+                .map_err(|_| PlanError::Cache)?;
+            if indexed.release().contents() != self.release.release().contents() {
+                return Err(PlanError::Cache);
+            }
+        }
+        Ok(())
+    }
+    /// Produce an informational metadata plan after rechecking the cache. It is not installable.
+    pub fn plan(
+        &self,
+        journal: &SnapshotJournal,
+        package: &str,
+    ) -> Result<MetadataPlan, PlanError> {
+        self.plan_with_clock(journal, package, SystemTime::now)
+    }
+    pub(crate) fn plan_with_clock(
+        &self,
+        journal: &SnapshotJournal,
+        package: &str,
+        clock: impl Fn() -> SystemTime,
+    ) -> Result<MetadataPlan, PlanError> {
+        self.recheck(journal, &clock)?;
+        let request = self
+            .universe
+            .require(package)
+            .map_err(|_| PlanError::InvalidRequest)?;
+        let result = resolve(&self.universe, vec![request], SearchLimits::default());
+        self.recheck(journal, &clock)?;
+        let result = result.map_err(|error| match error {
+            ResolveError::LimitExceeded => PlanError::Limit,
+            ResolveError::Unsupported { trace } => PlanError::Unsupported(trace),
+            ResolveError::Unsatisfiable { trace } => PlanError::Unsatisfiable(trace),
+        })?;
+        let packages = result
+            .selected
+            .into_iter()
+            .map(|id| self.universe.label(id).ok_or(PlanError::Cache))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(MetadataPlan {
+            packages,
+            trace: result.trace,
+        })
     }
     pub fn package_count(&self) -> usize {
         self.universe.len()

@@ -40,6 +40,8 @@ Phase 1 regression coverage maps threats to executable tests:
 
 These tests are scoped to the metadata and download pipeline, not extraction, installation, full system compromise or a substitute for independent security review.
 
-The initial resolver policy (ADR 0009) compares exact distribution, suite and native architecture and rejects known moving aliases. It is not yet used by a resolver, and an operator must select a genuinely immutable suite label; matching labels do not establish ABI compatibility. Freshness must be rechecked separately at use time.
+The initial resolver policy (ADR 0009) compares exact distribution, suite and native architecture and rejects known moving aliases. The experimental single-source metadata planner applies it; an operator must select a genuinely immutable suite label; matching labels do not establish ABI compatibility. Freshness must be rechecked separately at use time.
 
-Relationship parsing (ADR 0010) does not authorize packages or determine whether host packages satisfy dependencies. Essential and Priority: required are separate metadata flags; resolution and any system-base policy must fail closed until implemented. Unsupported relation semantics, service integration and scripts remain blockers for installation.
+Relationship parsing (ADR 0010) does not authorize packages or determine whether host packages satisfy dependencies. Essential and Priority: required are separate metadata flags; the experimental planner rejects essential/required candidates and does not use host state. A complete system-base policy is not implemented. Unsupported relation semantics, service integration and scripts remain blockers for installation.
+
+Experimental plans are informational metadata results, not authenticated installation locks or evidence of ABI compatibility. Plan inputs are rechecked before and after search; the cache is not a globally atomic snapshot and can change after a plan returns. Packages with Pre-Depends, multiarch semantics or essential/required classification are not planned.

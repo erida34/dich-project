@@ -202,6 +202,31 @@ impl Provider for DebianUniverse {
             .map(|group| Requirement(group.alternatives().to_vec()))
             .collect()
     }
+    fn describe_candidate(&self, candidate: &usize) -> String {
+        self.label(*candidate)
+            .unwrap_or_else(|| "invalid candidate".into())
+    }
+    fn describe_requirement(&self, requirement: &Requirement) -> String {
+        requirement
+            .0
+            .iter()
+            .map(|relation| {
+                let mut result = relation.name().to_owned();
+                if let Some(version) = relation.version() {
+                    let operator = match version.operator() {
+                        Comparison::Less => "<<",
+                        Comparison::LessOrEqual => "<=",
+                        Comparison::Equal => "=",
+                        Comparison::GreaterOrEqual => ">=",
+                        Comparison::Greater => ">>",
+                    };
+                    result.push_str(&format!(" ({operator} {})", version.version().as_str()));
+                }
+                result
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
     fn incompatible(&self, left: &usize, right: &usize) -> bool {
         let (Some(a), Some(b)) = (self.candidates.get(*left), self.candidates.get(*right)) else {
             return true;

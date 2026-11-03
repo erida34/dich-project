@@ -189,6 +189,75 @@ fn cached_query_cli_outputs_authenticated_fixture_offline() {
             IndexLimits::default(),
         )
         .unwrap();
+    let planned = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--config",
+            config.to_str().unwrap(),
+            "--cache",
+            cache_dir.to_str().unwrap(),
+            "--max-age-seconds",
+            "86400",
+            "--allow-missing-valid-until",
+            "plan",
+            "fixture",
+            "--distribution",
+            "debian",
+            "--suite",
+            "bookworm",
+            "--architecture",
+            "amd64",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&planned.stdout).unwrap();
+    assert_eq!(body["status"], "planned");
+    assert_eq!(body["packages"], serde_json::json!(["fixture=1.0-1"]));
+    assert!(
+        body["trace"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s.as_str().unwrap().contains("fixture=1.0-1"))
+    );
+    for (name, distribution, expected) in [
+        ("missing", "debian", "unsatisfiable"),
+        ("fixture", "ubuntu", "plan_input_failed"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_dich"))
+            .args([
+                "--json",
+                "--config",
+                config.to_str().unwrap(),
+                "--cache",
+                cache_dir.to_str().unwrap(),
+                "--max-age-seconds",
+                "86400",
+                "--allow-missing-valid-until",
+                "plan",
+                name,
+                "--distribution",
+                distribution,
+                "--suite",
+                "bookworm",
+                "--architecture",
+                "amd64",
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["error"]["code"], expected);
+        if expected == "unsatisfiable" {
+            assert!(!error["error"]["trace"].as_array().unwrap().is_empty());
+        }
+    }
     for command in ["search", "show", "versions"] {
         let output = Command::new(env!("CARGO_BIN_EXE_dich"))
             .args([

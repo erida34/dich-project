@@ -694,6 +694,11 @@ fn resolver_loads_only_fresh_authenticated_cache_under_explicit_policy() {
         AuthenticatedUniverse::load_with_clock(source, &journal, freshness, &policy, || now)
             .unwrap();
     assert_eq!(universe.package_count(), 1);
+    let plan = universe
+        .plan_with_clock(&journal, "fixture", || now)
+        .unwrap();
+    assert_eq!(plan.packages, vec!["fixture=1.0-1"]);
+    assert!(plan.trace.iter().any(|item| item.contains("fixture=1.0-1")));
     assert!(
         AuthenticatedUniverse::load_with_clock(source, &journal, freshness, &wrong, || now)
             .is_err()
@@ -711,6 +716,11 @@ fn resolver_loads_only_fresh_authenticated_cache_under_explicit_policy() {
     )
     .unwrap();
     fs::write(dir.path().join(index_name), b"corrupt").unwrap();
+    assert!(
+        universe
+            .plan_with_clock(&journal, "fixture", || now)
+            .is_err()
+    );
     assert!(
         AuthenticatedUniverse::load_with_clock(source, &journal, freshness, &policy, || now)
             .is_err()

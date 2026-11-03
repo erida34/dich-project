@@ -12,6 +12,12 @@ pub trait Provider {
     }
     fn requirements(&self, candidate: &Self::Candidate) -> Vec<Self::Requirement>;
     fn incompatible(&self, left: &Self::Candidate, right: &Self::Candidate) -> bool;
+    fn describe_candidate(&self, candidate: &Self::Candidate) -> String {
+        format!("{candidate:?}")
+    }
+    fn describe_requirement(&self, requirement: &Self::Requirement) -> String {
+        format!("{requirement:?}")
+    }
 }
 #[derive(Debug, Clone, Copy)]
 pub struct SearchLimits {
@@ -105,23 +111,42 @@ impl<P: Provider> Search<'_, P> {
         if options.len() > 1024 {
             return Err(ResolveError::LimitExceeded);
         }
-        if options.iter().any(|candidate| selected.contains(candidate)) {
+        if let Some(candidate) = options
+            .iter()
+            .find(|candidate| selected.contains(candidate))
+        {
+            self.note(format!(
+                "{} satisfied by already selected {}",
+                self.provider.describe_requirement(&requirement),
+                self.provider.describe_candidate(candidate)
+            ));
             return self.visit(pending, selected, depth + 1);
         }
         if options.is_empty() {
-            self.note(format!("no candidate for {requirement:?}"));
+            self.note(format!(
+                "no candidate for {}",
+                self.provider.describe_requirement(&requirement)
+            ));
         }
         for candidate in options {
-            if selected.iter().any(|old| {
+            if let Some(old) = selected.iter().find(|old| {
                 self.provider.incompatible(old, &candidate)
                     || self.provider.incompatible(&candidate, old)
             }) {
-                self.note(format!("conflict for {candidate:?}"));
+                self.note(format!(
+                    "conflict between {} and {}",
+                    self.provider.describe_candidate(&candidate),
+                    self.provider.describe_candidate(old)
+                ));
                 continue;
             }
             if selected.len() >= self.limits.max_selected {
                 return Err(ResolveError::LimitExceeded);
             }
+            self.note(format!(
+                "considering {}",
+                self.provider.describe_candidate(&candidate)
+            ));
             let mut next = selected.clone();
             next.push(candidate.clone());
             let mut obligations = self.provider.requirements(&candidate);
@@ -132,7 +157,10 @@ impl<P: Provider> Search<'_, P> {
             if let Some(result) = self.visit(obligations, next, depth + 1)? {
                 return Ok(Some(result));
             }
-            self.note(format!("backtrack from {candidate:?}"));
+            self.note(format!(
+                "backtrack from {}",
+                self.provider.describe_candidate(&candidate)
+            ));
         }
         Ok(None)
     }
