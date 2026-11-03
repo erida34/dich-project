@@ -4,7 +4,7 @@ Assessment date: 2026-11-04. Scope: current local worktree based on `master` com
 
 ## Executive summary
 
-Dich is a local Rust CLI with no inbound listener. Its main security boundary is from operator-configured signing keys through HTTPS APT metadata to verified package bytes and into a private store/profile. Signature, digest, path and resource controls substantially reduce malicious mirror and archive risks. The highest residual risks are compromise of a trusted repository signing key, loading a selected DSO with caller privileges, same-user tampering or deletion of rollback state, and release-tag permissions that can publish a build. `dlmopen` isolates symbol lookup only; it is not a process sandbox. The project remains experimental, and the `0.7.0` release workflow has not yet run.
+Dich is a local Rust CLI with no inbound listener. Its main security boundary is from operator-configured signing keys through HTTPS APT metadata to verified package bytes and into a private store/profile. Signature, digest, path and resource controls substantially reduce malicious mirror and archive risks. The highest residual risks are compromise of a trusted repository signing key, loading a selected DSO with caller privileges, same-user tampering or deletion of rollback state, and release-tag permissions that can publish a build. `dlmopen` isolates symbol lookup only; it is not a process sandbox. The project remains experimental. The first `v0.7.0` release attempt failed before job setup due to an invalid action pin; the corrected pin is covered by green master CI, but the release workflow must still be rerun.
 
 ## Scope and assumptions
 
@@ -128,13 +128,13 @@ Assumption that most affects these ratings: single trusted store owner. A shared
 | `crates/dich-elf/src`, `crates/dich-engine/src/lib.rs` | Static compatibility decisions gate profile selection but cannot prove runtime safety. | TM-001, TM-005 |
 | `crates/dich-store/src/publication.rs`, `profiles.rs`, `gc.rs`, `recovery.rs` | Durable publication, active profile identity, recovery and deletion invariants. | TM-003, TM-004 |
 | `.github/workflows/release.yml` | Tag-triggered build, artifact publication, token/OIDC scope and provenance. | TM-002 |
-| `SECURITY.md`, GitHub repository Security settings | External beta vulnerability reporting currently lacks a confirmed private channel. | TM-001, TM-002 |
+| `SECURITY.md`, GitHub repository Security settings | Private vulnerability reporting is enabled; no separate maintainer security email is configured. | TM-001, TM-002 |
 
 ## Notes on use
 
 - Review covers repository evidence and configured controls; it does not prove absence of vulnerabilities, successful behavior under physical power loss, or independent human audit.
-- Release workflow and package version `0.7.0` have not been run through hosted CI or published as a GitHub Release in this assessment.
-- External beta results and triage evidence are absent. Do not mark the combined beta roadmap item complete based on this internal review.
+- The `0.7.0` package has passed master CI; the release workflow has only had an initial setup failure and no GitHub Release assets are published in this assessment.
+- External beta results and triage evidence are absent. Private vulnerability reporting was enabled on GitHub on 2026-11-04 (REST API response 204); no separate maintainer email is configured. Do not mark the combined beta roadmap item complete based on this internal review.
 - No response to the shared-host context question was received before this draft; single-operator use remains an explicit assumption.
 
 ## Quality check

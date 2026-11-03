@@ -37,7 +37,7 @@ To maintain high software reliability and security posture, reported issues are 
 | **P3 - Minor / UX / Docs** | Cosmetic CLI output issue, documentation clarification, non-blocking warning message, shell completion edge case. | < 7 days | Standard backlog |
 
 ### 2.1 Security Vulnerability Handling
-Security vulnerabilities must **not** be reported through public GitHub issues. Use GitHub's private **Report a vulnerability** flow only after the repository owner enables it. No separate maintainer security contact is configured yet, so external beta recruitment must wait until a private reporting route is confirmed. Adversarial regression tests should accompany confirmed fixes.
+Security vulnerabilities must **not** be reported through public GitHub issues. GitHub private vulnerability reporting is enabled; use the repository's **Security → Advisories → Report a vulnerability** flow. No separate maintainer security contact is configured. Adversarial regression tests should accompany confirmed fixes.
 
 ---
 

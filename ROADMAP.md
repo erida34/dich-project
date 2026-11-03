@@ -69,7 +69,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] GitHub Actions: format, clippy, tests, docs, real `.deb` install/upgrade/remove in clean target images. Hosted run 41717128407 passed both jobs; package smoke passed Debian Bookworm/Trixie and Ubuntu 22.04/24.04.
 - [ ] Release artifacts for amd64; arm64 only after verified, SHA256SUMS, release notes and verified GitHub Release assets (ADR 0038). CI is green; first `v0.7.0` release run failed during setup because the provenance action SHA was invalid. No release assets exist yet; corrected pin is pending CI/release rerun.
 - [x] Document migration of store DB format, downgrade and recoverability, data durability and backup/restore (ADR 0039).
-- [ ] External beta testers, issue triage, threat model review, compatibility limitations explicit (ADR 0040). Internal repository-grounded review is recorded in `dich-project-threat-model.md` and compatibility claims were corrected; external tester/triage evidence and a confirmed private vulnerability-reporting channel are still missing.
+- [ ] External beta testers, issue triage, threat model review, compatibility limitations explicit (ADR 0040). Internal repository-grounded review is recorded in `dich-project-threat-model.md`, compatibility claims were corrected, and GitHub private vulnerability reporting is enabled; external tester results and issue-triage evidence are still missing.
 
 ## Release criteria (all required for any production claim)
 - [x] Trusted repository verification and fail-closed integrity checks work and are adversarially tested (ADR 0003, ADR 0033).
