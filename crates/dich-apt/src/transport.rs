@@ -24,6 +24,7 @@ pub enum FetchError {
     Artifact,
     Timeout,
     Metadata,
+    NotFound,
 }
 
 /// A hash-checked index and its compressed bytes for cache publication.
@@ -50,8 +51,29 @@ pub(crate) fn fetch_release_with_transport(
     transport: &mut impl Transport,
 ) -> Result<VerifiedRelease, FetchError> {
     let path = format!("dists/{}/InRelease", source.suite());
-    let bytes = fetch_metadata(source, &path, 4 * 1024 * 1024, transport)?;
-    crate::verify_configured_inrelease(source, &bytes).map_err(|_| FetchError::Metadata)
+    match fetch_metadata(source, &path, 4 * 1024 * 1024, transport) {
+        Ok(bytes) => {
+            crate::verify_configured_inrelease(source, &bytes).map_err(|_| FetchError::Metadata)
+        }
+        Err(FetchError::NotFound) => {
+            let base = format!("dists/{}/", source.suite());
+            let release = fetch_metadata(
+                source,
+                &format!("{base}Release"),
+                4 * 1024 * 1024,
+                transport,
+            )?;
+            let signature = fetch_metadata(
+                source,
+                &format!("{base}Release.gpg"),
+                1024 * 1024,
+                transport,
+            )?;
+            crate::verify_configured_detached_release(source, &release, &signature)
+                .map_err(|_| FetchError::Metadata)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Fetch and verify an index against a fresh, signed Release.
@@ -174,6 +196,7 @@ fn fetch_metadata(
                 )?
             }
             301 | 302 | 303 | 307 | 308 => return Err(FetchError::Redirect),
+            404 => return Err(FetchError::NotFound),
             _ => return Err(FetchError::Status),
         }
     }

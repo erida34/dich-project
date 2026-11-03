@@ -29,17 +29,11 @@ XDG/user store support will be an independently specified mode. Never use arbitr
 ## Trust boundary
 APT authenticity -> verified Release -> hash-verified Packages -> hash-verified `.deb`. Signature verification alone does not grant permission to execute package scripts or to modify system files. Relocation transforms package bytes, creating a new store object identity.
 
-The current `dich-apt` library can parse operator TOML policy from a bounded reader and import a restricted deb822 source under that independent policy (ADR 0002). The policy associates a declared distribution, exact URI and suite, allowed components, architecture, keyring path and full fingerprints. Configured-keyring verification uses `gpgv` and checks signer fingerprints (ADR 0003); callers must securely open the policy and source files, and the CLI does not yet load them. Explicit Release origin, suite and freshness validation is available as a separate gate, but persisted anti-rollback state, repository update and package installation are not implemented. Import or signature success alone is not evidence that a repository is safe to use.
+The source policy binds distribution, URI, suite, components, architecture, keyring and fingerprints (ADR 0002). Protected file loading and configured-keyring `gpgv` verification establish the input boundary (ADRs 0003 and 0008). Source listing reports configuration only.
 
-The library also binds a Packages index to the verified Release's source and SHA256/size entry before decoding gzip or xz with bounded helpers (ADR 0004). This does not establish Release freshness or artifact integrity and is not connected to networking or package parsing.
+`update` verifies InRelease or, only on HTTP 404, detached Release and Release.gpg, checks origin, suite and explicit freshness policy, then fetches and verifies each signed Packages index (ADRs 0004 and 0008). A protected cache maintains a per-source rollback floor and reauthenticates cached metadata on read (ADR 0007). Individual cache entries are durably published, but an update across entries or sources is not atomic: failure may leave a partial cache. Offline queries fail closed on missing or inconsistent indices, and do not provide a global concurrent snapshot.
 
-Control paragraph, dependency-expression and Debian version parsers are available as library APIs (ADR 0005). They preserve relation restrictions for future evaluation; parsing does not solve dependencies or establish installation compatibility. They are not connected to the CLI.
-
-Artifact metadata can be selected from a verified index, bound to the same time-validated Release and downloaded over restricted HTTPS as a bounded stream into anonymous temporary storage (ADR 0006). A library-only cache stores signed Release envelopes, compressed indices and verified artifacts with source locks, a rollback floor and integrity rechecks (ADR 0007). It requires a protected local directory and trusted clock; the CLI does not initialize or use it.
-
-`sources list` reads operator policy and deb822 files through protected paths and reports configured entries only (ADR 0008). It does not contact repositories or verify their keys. The CLI's other repository commands remain planned.
-
-The library can retrieve and authenticate InRelease and retrieve a Packages index under a time-validated Release. This is not yet a complete update workflow: network retrieval of detached Release signatures, cache orchestration and offline CLI queries remain planned.
+Control and Debian version parsers support cached package name/version queries, but do not solve dependencies or establish compatibility (ADR 0005). Verified artifacts can be downloaded through library APIs under the signed index and restricted HTTPS policy (ADR 0006); the CLI cannot fetch or install them. These features require a trusted clock and protected local storage. Import or signature success alone is not permission to execute package scripts or modify system files.
 
 ## Invariants
 - No store object is published prior to full verification.

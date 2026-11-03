@@ -9,6 +9,15 @@ pub struct Cli {
     /// Path to trusted source policy
     #[arg(long, global = true, default_value = "/etc/dich/sources.toml")]
     pub config: PathBuf,
+    /// Existing protected cache directory
+    #[arg(long, global = true, default_value = "/var/cache/dich")]
+    pub cache: PathBuf,
+    /// Explicit maximum age for signed Release metadata, in seconds
+    #[arg(long, global = true)]
+    pub max_age_seconds: Option<u64>,
+    /// Permit missing Valid-Until while still enforcing maximum age
+    #[arg(long, global = true)]
+    pub allow_missing_valid_until: bool,
     /// Emit versioned JSON output and errors
     #[arg(long, global = true)]
     pub json: bool,
@@ -18,13 +27,13 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Refresh authenticated package metadata (planned)
+    /// Refresh authenticated package metadata
     Update,
-    /// Find packages (planned)
+    /// Find package names in the authenticated local cache
     Search { query: String },
-    /// Display package metadata (planned)
+    /// Display matching cached package records
     Show { package: String },
-    /// List available package versions (planned)
+    /// List cached package versions
     Versions { package: String },
     /// Show dependency plan (planned)
     Plan { package: String },
@@ -104,6 +113,141 @@ impl CliError {
 
 pub fn run(cli: Cli) -> Result<(), CliError> {
     match cli.command {
+        command @ (Commands::Search { .. } | Commands::Show { .. } | Commands::Versions { .. }) => {
+            #[cfg(target_os = "linux")]
+            {
+                let age = cli.max_age_seconds.ok_or(CliError {
+                    code: "freshness_policy_required",
+                    message: "specify --max-age-seconds explicitly",
+                })?;
+                let freshness = dich_apt::FreshnessPolicy::new(
+                    std::time::Duration::from_secs(age),
+                    std::time::Duration::from_secs(300),
+                    !cli.allow_missing_valid_until,
+                )
+                .map_err(|_| CliError {
+                    code: "invalid_freshness_policy",
+                    message: "invalid metadata freshness policy",
+                })?;
+                let sources =
+                    dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
+                        code: "source_load_failed",
+                        message: "could not load trusted source configuration",
+                    })?;
+                let cache = dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
+                    code: "cache_open_failed",
+                    message: "could not open protected cache directory",
+                })?;
+                let query = match &command {
+                    Commands::Search { query } => dich_apt::Query::Search(query),
+                    Commands::Show { package } => dich_apt::Query::Show(package),
+                    Commands::Versions { package } => dich_apt::Query::Versions(package),
+                    _ => {
+                        return Err(CliError {
+                            code: "invalid_arguments",
+                            message: "invalid query command",
+                        });
+                    }
+                };
+                let records =
+                    dich_apt::query_cached(&sources, &cache, freshness, query).map_err(|_| {
+                        CliError {
+                            code: "query_failed",
+                            message: "could not read complete authenticated cached metadata",
+                        }
+                    })?;
+                if records.is_empty() && !matches!(command, Commands::Search { .. }) {
+                    return Err(CliError {
+                        code: "not_found",
+                        message: "package not found in configured cached sources",
+                    });
+                }
+                if cli.json {
+                    let entries: Vec<_> = records.iter().map(|r| serde_json::json!({"name": r.name, "version": r.version, "architecture": r.architecture, "source": r.source, "suite": r.suite})).collect();
+                    println!(
+                        "{}",
+                        serde_json::json!({"schema_version": 1, "status": "completed", "records": entries})
+                    );
+                } else {
+                    for record in records {
+                        println!(
+                            "{}\t{}\t{}\t{}\t{}",
+                            record.name,
+                            record.version,
+                            record.architecture,
+                            record.source,
+                            record.suite
+                        );
+                    }
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = command;
+                Err(CliError {
+                    code: "unsupported_platform",
+                    message: "cached queries require Linux",
+                })
+            }
+        }
+        Commands::Update => {
+            #[cfg(target_os = "linux")]
+            {
+                let age = cli.max_age_seconds.ok_or(CliError {
+                    code: "freshness_policy_required",
+                    message: "specify --max-age-seconds explicitly",
+                })?;
+                let freshness = dich_apt::FreshnessPolicy::new(
+                    std::time::Duration::from_secs(age),
+                    std::time::Duration::from_secs(300),
+                    !cli.allow_missing_valid_until,
+                )
+                .map_err(|_| CliError {
+                    code: "invalid_freshness_policy",
+                    message: "invalid metadata freshness policy",
+                })?;
+                let sources =
+                    dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
+                        code: "source_load_failed",
+                        message: "could not load trusted source configuration",
+                    })?;
+                let cache = dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
+                    code: "cache_open_failed",
+                    message: "could not open protected cache directory",
+                })?;
+                let mut indices = 0usize;
+                for source in &sources {
+                    let report = dich_apt::update_source(
+                        source,
+                        &cache,
+                        freshness,
+                        dich_apt::IndexLimits::default(),
+                    )
+                    .map_err(|_| CliError {
+                        code: "update_failed",
+                        message: "repository update failed; earlier cache entries may have changed",
+                    })?;
+                    indices += report.indices;
+                }
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"schema_version": 1, "status": "completed", "sources": sources.len(), "indices": indices})
+                    );
+                } else {
+                    println!("completed: {} sources, {indices} indices", sources.len());
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                Err(CliError {
+                    code: "unsupported_platform",
+                    message: "repository update requires Linux",
+                })
+            }
+        }
         Commands::Sources {
             command: SourcesCommands::List,
         } => {

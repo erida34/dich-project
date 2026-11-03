@@ -21,8 +21,8 @@ pub use dependencies::{
 mod index;
 mod keyring;
 pub use index::{
-    IndexError, IndexFormat, IndexLimits, VerifiedIndex, verify_packages_index,
-    verify_packages_index_with_limits,
+    IndexError, IndexFormat, IndexLimits, VerifiedIndex, choose_index_format,
+    verify_packages_index, verify_packages_index_with_limits,
 };
 mod signatures;
 pub use keyring::read_configured_keyring;
@@ -30,6 +30,14 @@ mod freshness;
 mod sources;
 mod transport;
 pub use transport::{FetchError, FetchedIndex, fetch_packages_index, fetch_signed_release};
+#[cfg(target_os = "linux")]
+mod update;
+#[cfg(target_os = "linux")]
+pub use update::{UpdateError, UpdateReport, update_source};
+#[cfg(target_os = "linux")]
+mod query;
+#[cfg(target_os = "linux")]
+pub use query::{PackageRecord, Query, QueryError, query_cached};
 mod version;
 pub use config::{
     ConfiguredSource, load_configured_sources, parse_source_config, read_source_config,

@@ -53,6 +53,7 @@ pub enum IndexError {
     TooLarge,
     Decompression,
     HelperUnavailable,
+    NotFound,
 }
 impl fmt::Display for IndexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -189,7 +190,42 @@ fn lookup_checksum(release: &[u8], wanted: &str) -> Result<(u64, [u8; 32]), Inde
     if !found_section {
         return Err(IndexError::InvalidMetadata);
     }
-    result.ok_or(IndexError::InvalidMetadata)
+    result.ok_or(IndexError::NotFound)
+}
+
+/// Choose a signed index format without treating malformed metadata as a fallback.
+pub fn choose_index_format(
+    release: &crate::ValidatedRelease,
+    component: &str,
+) -> Result<IndexFormat, IndexError> {
+    if !release
+        .source()
+        .components()
+        .iter()
+        .any(|value| value == component)
+    {
+        return Err(IndexError::PolicyMismatch);
+    }
+    choose_format(
+        release.release().contents(),
+        component,
+        release.source().architecture(),
+    )
+}
+
+fn choose_format(
+    release: &[u8],
+    component: &str,
+    architecture: &str,
+) -> Result<IndexFormat, IndexError> {
+    let path = |suffix| format!("{component}/binary-{architecture}/Packages.{suffix}");
+    match lookup_checksum(release, &path("xz")) {
+        Ok(_) => Ok(IndexFormat::Xz),
+        Err(IndexError::NotFound) => {
+            lookup_checksum(release, &path("gz")).map(|_| IndexFormat::Gzip)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -298,6 +334,22 @@ mod tests {
         for case in cases {
             assert!(lookup_checksum(case.as_bytes(), PATH).is_err());
         }
+    }
+
+    #[test]
+    fn selects_only_formats_present_in_valid_signed_metadata() {
+        let gzip = format!("SHA256:\n {HASH} 12 main/binary-amd64/Packages.gz\n");
+        assert_eq!(
+            choose_format(gzip.as_bytes(), "main", "amd64").unwrap(),
+            IndexFormat::Gzip
+        );
+        let both = format!("{gzip} {HASH} 14 main/binary-amd64/Packages.xz\n");
+        assert_eq!(
+            choose_format(both.as_bytes(), "main", "amd64").unwrap(),
+            IndexFormat::Xz
+        );
+        assert!(choose_format(gzip.replace(HASH, "bad").as_bytes(), "main", "amd64").is_err());
+        assert!(choose_format(gzip.as_bytes(), "main", "arm64").is_err());
     }
 
     #[test]

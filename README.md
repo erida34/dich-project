@@ -2,7 +2,7 @@
 
 **Dich** — a version-aware, dependency-sharing package store for Debian and Ubuntu sources, written in Rust.
 
-> **Status: experimental.** The executable can list explicitly configured sources; other package operations remain unsupported. Library components verify signatures and artifacts, but the CLI has no repository update pipeline, package installation, immutable store or ABI relocation. Do not use it as a production package manager.
+> **Status: experimental.** The executable can list configured sources, update authenticated repository metadata and query the verified local cache. Package installation, dependency resolution, immutable store and ABI relocation are not implemented. Do not use it as a production package manager.
 
 ## Vision
 
@@ -31,15 +31,18 @@ cargo test --workspace --all-targets
 cargo run -p dich-cli -- install openssl@3
 ```
 
-The last command currently exits with an explicit **not implemented** error. To inspect a trusted source policy without contacting repositories, run `dich --config /absolute/path/sources.toml sources list` (add `--json` for versioned output). Listing means configured, not authenticated or available. Other CLI examples below show the *planned* interface.
+The last command currently exits with an explicit **not implemented** error. To inspect a trusted source policy without contacting repositories, run `dich --config /absolute/path/sources.toml sources list` (add `--json` for versioned output). Listing means configured, not authenticated or available. For metadata queries, configure real trusted source policy and keyrings as described in `docs/adr/0002-source-policy.md` and `docs/adr/0008-cli-sources.md`. Create a protected local cache directory owned by the invoking user (or root); Dich will not initialize it. Set a suitable maximum metadata age explicitly according to your repository and security requirements, then run:
+
+```sh
+dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 update
+dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 search openssl
+```
+
+If the repository omits `Valid-Until`, `--allow-missing-valid-until` explicitly permits it while retaining the maximum-age check. Search is a package-name substring; show and versions require an exact name. Results contain name, version, architecture, source and suite only, and do not establish installability. Queries fail when any configured index is unavailable, stale or invalid. An interrupted or failed update can leave a partial cache; rerun update. Protect the cache and clock: deletion or rollback of the entire cache can defeat its per-source rollback floor. Remaining examples below show the *planned* package interface.
 
 ## Planned CLI
 
 ```text
-dich update
-dich search openssl
-dich versions libssl3
-dich show libssl3
 dich plan libssl3@3.0
 dich fetch libssl3@3.0
 dich inspect ./libssl3.deb

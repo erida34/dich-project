@@ -87,6 +87,199 @@ fn metadata_download_authenticates_and_checks_signed_index() {
 }
 
 #[test]
+fn missing_inrelease_uses_verified_detached_signature_only() {
+    use crate::transport::fetch_release_with_transport;
+    let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+    let key = dir.path().join("key.gpg");
+    fs::write(
+        &key,
+        include_bytes!("../tests/fixtures/freshness/keyring.gpg"),
+    )
+    .unwrap();
+    let path = key.to_str().unwrap();
+    let policy = SourcePolicy::new(
+        Distribution::Debian,
+        "https://example.org/debian",
+        "bookworm",
+        &["main"],
+        "amd64",
+        path,
+        &["F54741F2B0E1F1B32F7EE55EC9079FF55FECB8D2"],
+    )
+    .unwrap();
+    let stanza = format!(
+        "Types: deb\nURIs: https://example.org/debian\nSuites: bookworm\nComponents: main\nSigned-By: {path}\n"
+    );
+    let source = import_sources(&stanza, &policy).unwrap().remove(0);
+    let mut fallback = Fake {
+        responses: VecDeque::from([
+            response(404, None, b""),
+            response(
+                200,
+                None,
+                include_bytes!("../tests/fixtures/freshness/valid.Release"),
+            ),
+            response(
+                200,
+                None,
+                include_bytes!("../tests/fixtures/freshness/valid.Release.gpg"),
+            ),
+        ]),
+        calls: vec![],
+    };
+    assert!(fetch_release_with_transport(&source, &mut fallback).is_ok());
+    assert_eq!(fallback.calls.len(), 3);
+    let mut bad_signature = Fake {
+        responses: VecDeque::from([
+            response(404, None, b""),
+            response(
+                200,
+                None,
+                include_bytes!("../tests/fixtures/freshness/valid.Release"),
+            ),
+            response(200, None, b"bad signature"),
+        ]),
+        calls: vec![],
+    };
+    assert!(fetch_release_with_transport(&source, &mut bad_signature).is_err());
+    let mut forged = Fake {
+        responses: VecDeque::from([
+            response(200, None, b"forged"),
+            response(
+                200,
+                None,
+                include_bytes!("../tests/fixtures/freshness/valid.Release"),
+            ),
+        ]),
+        calls: vec![],
+    };
+    assert!(fetch_release_with_transport(&source, &mut forged).is_err());
+    assert_eq!(forged.calls.len(), 1);
+    let mut unavailable = Fake {
+        responses: VecDeque::from([response(500, None, b"")]),
+        calls: vec![],
+    };
+    assert!(fetch_release_with_transport(&source, &mut unavailable).is_err());
+    assert_eq!(unavailable.calls.len(), 1);
+}
+
+#[test]
+fn update_authenticates_fetches_and_caches_signed_index() {
+    use crate::update::update_with_transport;
+    use crate::{IndexLimits, SnapshotJournal};
+    let (dir, authorized) = local_authorization("https://example.org/debian");
+    let source = authorized.release().source();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    let policy =
+        FreshnessPolicy::new(Duration::from_secs(2 * 86400), Duration::ZERO, true).unwrap();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let mut transport = Fake {
+        responses: VecDeque::from([
+            response(
+                200,
+                None,
+                include_bytes!("../tests/fixtures/index/InRelease"),
+            ),
+            response(
+                200,
+                None,
+                include_bytes!("../tests/fixtures/index/Packages.xz"),
+            ),
+        ]),
+        calls: vec![],
+    };
+    let result = update_with_transport(
+        source,
+        &journal,
+        policy,
+        IndexLimits::default(),
+        &mut transport,
+        || now,
+    )
+    .unwrap();
+    assert_eq!(result.indices, 1);
+    let (_, index) = journal
+        .load_index_at(
+            source,
+            policy,
+            "main",
+            IndexFormat::Xz,
+            IndexLimits::default(),
+            now,
+        )
+        .unwrap();
+    assert!(select_indexed_artifact(&index, "fixture", "1.0-1").is_ok());
+    let found = crate::query::query_with_clock(
+        std::slice::from_ref(source),
+        &journal,
+        policy,
+        crate::query::Query::Search("fix"),
+        || now,
+    )
+    .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, "fixture");
+    let versions = crate::query::query_with_clock(
+        std::slice::from_ref(source),
+        &journal,
+        policy,
+        crate::query::Query::Versions("fixture"),
+        || now,
+    )
+    .unwrap();
+    assert_eq!(versions[0].version, "1.0-1");
+    assert!(
+        crate::query::query_with_clock(
+            std::slice::from_ref(source),
+            &journal,
+            policy,
+            crate::query::Query::Show("missing"),
+            || now
+        )
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        crate::query::query_with_clock(
+            std::slice::from_ref(source),
+            &journal,
+            policy,
+            crate::query::Query::Search("../"),
+            || now
+        )
+        .is_err()
+    );
+    assert!(
+        crate::query::query_with_clock(
+            std::slice::from_ref(source),
+            &journal,
+            policy,
+            crate::query::Query::Search("fix"),
+            || now + Duration::from_secs(3 * 86400)
+        )
+        .is_err()
+    );
+    let index_name = crate::cache::index_name(
+        source,
+        authorized.release().release().contents(),
+        "main",
+        IndexFormat::Xz,
+    )
+    .unwrap();
+    fs::write(dir.path().join(index_name), b"corrupt").unwrap();
+    assert!(
+        crate::query::query_with_clock(
+            std::slice::from_ref(source),
+            &journal,
+            policy,
+            crate::query::Query::Search("fix"),
+            || now
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn redirect_policy_rejects_origin_escape_and_encoded_paths() {
     let base = Url::parse("https://example.org/debian/").unwrap();
     let current = base.join("pool/a.deb").unwrap();

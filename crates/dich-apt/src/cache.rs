@@ -338,7 +338,7 @@ impl SnapshotJournal {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn store_index_with_clock(
+    pub(crate) fn store_index_with_clock(
         &self,
         release: &ValidatedRelease,
         component: &str,
@@ -395,7 +395,7 @@ impl SnapshotJournal {
         result
     }
 
-    fn load_index_with_clock(
+    pub(crate) fn load_index_with_clock(
         &self,
         source: &Source,
         policy: FreshnessPolicy,
@@ -455,7 +455,7 @@ impl SnapshotJournal {
         self.load_release_with_clock(source, policy, || now)
     }
 
-    fn store_release_with_clock(
+    pub(crate) fn store_release_with_clock(
         &self,
         release: &ValidatedRelease,
         failure: FailurePoint,
@@ -517,7 +517,7 @@ impl SnapshotJournal {
         result
     }
 
-    fn load_release_with_clock(
+    pub(crate) fn load_release_with_clock(
         &self,
         source: &Source,
         policy: FreshnessPolicy,
