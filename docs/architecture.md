@@ -39,6 +39,8 @@ Artifact metadata can be selected from a verified index, bound to the same time-
 
 `sources list` reads operator policy and deb822 files through protected paths and reports configured entries only (ADR 0008). It does not contact repositories or verify their keys. The CLI's other repository commands remain planned.
 
+The library can retrieve and authenticate InRelease and retrieve a Packages index under a time-validated Release. This is not yet a complete update workflow: network retrieval of detached Release signatures, cache orchestration and offline CLI queries remain planned.
+
 ## Invariants
 - No store object is published prior to full verification.
 - No version is activated without a fully validated dependency closure.

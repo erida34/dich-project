@@ -1,17 +1,16 @@
 #![cfg(target_os = "linux")]
 use dich_apt::{
     Distribution, FreshnessPolicy, IndexFormat, IndexLimits, SourcePolicy, authorize_artifact,
-    import_sources, select_indexed_artifact, validate_release, verify_configured_inrelease,
-    verify_packages_index,
+    fetch_packages_index, fetch_signed_release, import_sources, select_indexed_artifact,
+    validate_release,
 };
 use std::{
-    fs,
     io::Read,
     time::{Duration, SystemTime},
 };
 
 #[test]
-#[ignore = "requires prepared Ubuntu noble Release, compressed index, keyring and network"]
+#[ignore = "requires Ubuntu archive keyring and network"]
 fn fetches_real_ubuntu_artifact_through_verified_chain() {
     let keyring = "/root/ubuntu-archive-keyring.gpg";
     let policy = SourcePolicy::new(
@@ -28,8 +27,7 @@ fn fetches_real_ubuntu_artifact_through_verified_chain() {
         "Types: deb\nURIs: https://archive.ubuntu.com/ubuntu\nSuites: noble\nComponents: main\nArchitectures: amd64\nSigned-By: {keyring}\n"
     );
     let source = import_sources(&stanza, &policy).unwrap().remove(0);
-    let signed = fs::read("/root/ubuntu-noble.InRelease").unwrap();
-    let release = verify_configured_inrelease(&source, &signed).unwrap();
+    let release = fetch_signed_release(&source).unwrap();
     // Noble's immutable initial Release has no Valid-Until. This deliberately
     // loose policy is test-only and does not prevent rollback within its window.
     let now = SystemTime::now();
@@ -40,9 +38,9 @@ fn fetches_real_ubuntu_artifact_through_verified_chain() {
     )
     .unwrap();
     let fresh = validate_release(&release, now, freshness).unwrap();
-    let compressed = fs::read("/root/noble-Packages.xz").unwrap();
-    let index = verify_packages_index(&release, "main", IndexFormat::Xz, &compressed).unwrap();
-    let artifact = select_indexed_artifact(&index, "hello", "2.10-3build1").unwrap();
+    let fetched =
+        fetch_packages_index(&fresh, "main", IndexFormat::Xz, IndexLimits::default()).unwrap();
+    let artifact = select_indexed_artifact(fetched.index(), "hello", "2.10-3build1").unwrap();
     let authorized = authorize_artifact(&fresh, &artifact, SystemTime::now()).unwrap();
     let cache = tempfile::tempdir_in("/root").unwrap();
     let journal = dich_apt::SnapshotJournal::open(cache.path()).unwrap();
@@ -52,7 +50,7 @@ fn fetches_real_ubuntu_artifact_through_verified_chain() {
             &fresh,
             "main",
             IndexFormat::Xz,
-            &compressed,
+            fetched.compressed(),
             IndexLimits::default(),
         )
         .unwrap();

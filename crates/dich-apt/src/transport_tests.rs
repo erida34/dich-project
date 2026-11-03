@@ -15,6 +15,78 @@ use std::{
 use url::Url;
 
 #[test]
+fn metadata_download_authenticates_and_checks_signed_index() {
+    use crate::IndexLimits;
+    use crate::transport::{fetch_index_with_transport, fetch_release_with_transport};
+    let (_dir, authorized) = local_authorization("https://example.org/debian");
+    let source = authorized.release().source();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    let mut transport = Fake {
+        responses: VecDeque::from([response(
+            200,
+            None,
+            include_bytes!("../tests/fixtures/index/InRelease"),
+        )]),
+        calls: vec![],
+    };
+    let release = fetch_release_with_transport(source, &mut transport).unwrap();
+    assert!(transport.calls[0].ends_with("/debian/dists/bookworm/InRelease"));
+    let policy =
+        FreshnessPolicy::new(Duration::from_secs(2 * 86400), Duration::ZERO, true).unwrap();
+    let release = validate_release(&release, now, policy).unwrap();
+    let mut index_transport = Fake {
+        responses: VecDeque::from([response(
+            200,
+            None,
+            include_bytes!("../tests/fixtures/index/Packages.gz"),
+        )]),
+        calls: vec![],
+    };
+    let index = fetch_index_with_transport(
+        &release,
+        "main",
+        IndexFormat::Gzip,
+        IndexLimits::default(),
+        &mut index_transport,
+        || now,
+    )
+    .unwrap();
+    assert!(select_indexed_artifact(index.index(), "fixture", "1.0-1").is_ok());
+    let mut forged = Fake {
+        responses: VecDeque::from([response(200, None, b"not signed")]),
+        calls: vec![],
+    };
+    assert!(fetch_release_with_transport(source, &mut forged).is_err());
+    let mut redirect = Fake {
+        responses: VecDeque::from([response(302, Some("https://evil.example/InRelease"), b"")]),
+        calls: vec![],
+    };
+    assert!(fetch_release_with_transport(source, &mut redirect).is_err());
+    assert_eq!(redirect.calls.len(), 1);
+    let oversized = vec![b'x'; 4 * 1024 * 1024 + 1];
+    let mut too_large = Fake {
+        responses: VecDeque::from([response(200, None, &oversized)]),
+        calls: vec![],
+    };
+    assert!(fetch_release_with_transport(source, &mut too_large).is_err());
+    let mut corrupt = Fake {
+        responses: VecDeque::from([response(200, None, b"bad index")]),
+        calls: vec![],
+    };
+    assert!(
+        fetch_index_with_transport(
+            &release,
+            "main",
+            IndexFormat::Gzip,
+            IndexLimits::default(),
+            &mut corrupt,
+            || now
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn redirect_policy_rejects_origin_escape_and_encoded_paths() {
     let base = Url::parse("https://example.org/debian/").unwrap();
     let current = base.join("pool/a.deb").unwrap();

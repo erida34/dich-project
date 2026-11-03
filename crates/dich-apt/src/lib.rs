@@ -29,7 +29,7 @@ pub use keyring::read_configured_keyring;
 mod freshness;
 mod sources;
 mod transport;
-pub use transport::FetchError;
+pub use transport::{FetchError, FetchedIndex, fetch_packages_index, fetch_signed_release};
 mod version;
 pub use config::{
     ConfiguredSource, load_configured_sources, parse_source_config, read_source_config,

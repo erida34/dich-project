@@ -1,6 +1,9 @@
 //! Restricted HTTPS download of an authorized artifact.
 use crate::artifact::verify_artifact_stream_with_clock;
-use crate::{AuthorizedArtifact, VerifiedArtifact};
+use crate::{
+    AuthorizedArtifact, IndexFormat, IndexLimits, Source, ValidatedRelease, VerifiedArtifact,
+    VerifiedIndex, VerifiedRelease,
+};
 use std::{
     error::Error,
     fmt,
@@ -20,6 +23,161 @@ pub enum FetchError {
     Transport,
     Artifact,
     Timeout,
+    Metadata,
+}
+
+/// A hash-checked index and its compressed bytes for cache publication.
+#[derive(Debug)]
+pub struct FetchedIndex {
+    index: VerifiedIndex,
+    compressed: Vec<u8>,
+}
+impl FetchedIndex {
+    pub fn index(&self) -> &VerifiedIndex {
+        &self.index
+    }
+    pub fn compressed(&self) -> &[u8] {
+        &self.compressed
+    }
+}
+
+/// Fetch and authenticate an InRelease; callers must validate freshness separately.
+pub fn fetch_signed_release(source: &Source) -> Result<VerifiedRelease, FetchError> {
+    fetch_release_with_transport(source, &mut HttpsTransport::new())
+}
+pub(crate) fn fetch_release_with_transport(
+    source: &Source,
+    transport: &mut impl Transport,
+) -> Result<VerifiedRelease, FetchError> {
+    let path = format!("dists/{}/InRelease", source.suite());
+    let bytes = fetch_metadata(source, &path, 4 * 1024 * 1024, transport)?;
+    crate::verify_configured_inrelease(source, &bytes).map_err(|_| FetchError::Metadata)
+}
+
+/// Fetch and verify an index against a fresh, signed Release.
+pub fn fetch_packages_index(
+    release: &ValidatedRelease,
+    component: &str,
+    format: IndexFormat,
+    limits: IndexLimits,
+) -> Result<FetchedIndex, FetchError> {
+    fetch_index_with_transport(
+        release,
+        component,
+        format,
+        limits,
+        &mut HttpsTransport::new(),
+        SystemTime::now,
+    )
+}
+pub(crate) fn fetch_index_with_transport(
+    release: &ValidatedRelease,
+    component: &str,
+    format: IndexFormat,
+    limits: IndexLimits,
+    transport: &mut impl Transport,
+    clock: impl Fn() -> SystemTime,
+) -> Result<FetchedIndex, FetchError> {
+    if !release.is_valid_at(clock())
+        || !release.source().components().iter().any(|c| c == component)
+    {
+        return Err(FetchError::Metadata);
+    }
+    let suffix = match format {
+        IndexFormat::Gzip => "gz",
+        IndexFormat::Xz => "xz",
+    };
+    let path = format!(
+        "dists/{}/{component}/binary-{}/Packages.{suffix}",
+        release.source().suite(),
+        release.source().architecture()
+    );
+    let compressed = fetch_metadata(
+        release.source(),
+        &path,
+        limits.compressed_limit(),
+        transport,
+    )?;
+    let index = crate::verify_packages_index_with_limits(
+        release.release(),
+        component,
+        format,
+        &compressed,
+        limits,
+    )
+    .map_err(|_| FetchError::Metadata)?;
+    if !release.is_valid_at(clock()) {
+        return Err(FetchError::Metadata);
+    }
+    Ok(FetchedIndex { index, compressed })
+}
+
+fn fetch_metadata(
+    source: &Source,
+    path: &str,
+    limit: usize,
+    transport: &mut impl Transport,
+) -> Result<Vec<u8>, FetchError> {
+    let mut base = Url::parse(source.uri()).map_err(|_| FetchError::InvalidUrl)?;
+    if base.scheme() != "https"
+        || base.host_str().is_none()
+        || base.query().is_some()
+        || base.fragment().is_some()
+        || !base.username().is_empty()
+        || base.password().is_some()
+    {
+        return Err(FetchError::InvalidUrl);
+    }
+    let base_path = format!("{}/", base.path().trim_end_matches('/'));
+    base.set_path(&base_path);
+    let mut current = base.join(path).map_err(|_| FetchError::InvalidUrl)?;
+    if !within_base(&base, &current) {
+        return Err(FetchError::InvalidUrl);
+    }
+    let deadline = Instant::now() + TOTAL_TIMEOUT;
+    for redirects in 0..=MAX_REDIRECTS {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|v| !v.is_zero())
+            .ok_or(FetchError::Timeout)?;
+        let response = transport.request(&current, remaining)?;
+        match response.status {
+            200 => {
+                if response.content_length.is_some_and(|v| v > limit as u64)
+                    || response
+                        .content_encoding
+                        .as_deref()
+                        .is_some_and(|v| !v.eq_ignore_ascii_case("identity"))
+                {
+                    return Err(FetchError::Metadata);
+                }
+                let mut bytes = Vec::new();
+                response
+                    .body
+                    .take((limit + 1) as u64)
+                    .read_to_end(&mut bytes)
+                    .map_err(|_| FetchError::Transport)?;
+                if bytes.len() > limit
+                    || response
+                        .content_length
+                        .is_some_and(|v| v != bytes.len() as u64)
+                {
+                    return Err(FetchError::Metadata);
+                }
+                return Ok(bytes);
+            }
+            301 | 302 | 303 | 307 | 308 if redirects < MAX_REDIRECTS => {
+                current = resolve_redirect(
+                    &base,
+                    &current,
+                    response.location.as_deref().ok_or(FetchError::Redirect)?,
+                )?
+            }
+            301 | 302 | 303 | 307 | 308 => return Err(FetchError::Redirect),
+            _ => return Err(FetchError::Status),
+        }
+    }
+    Err(FetchError::Redirect)
 }
 impl fmt::Display for FetchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
