@@ -67,7 +67,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Polish README/getting started, installation and uninstall, config examples, FAQ, man pages, shell completions, CHANGELOG.
 - [x] `cargo-deny`, `cargo-audit`, dependency/license policy, reproducible build guidance, SBOM and provenance (ADR 0037).
 - [x] GitHub Actions: format, clippy, tests, docs, real `.deb` install/upgrade/remove in clean target images. Hosted run 41717128407 passed both jobs; package smoke passed Debian Bookworm/Trixie and Ubuntu 22.04/24.04.
-- [ ] Release artifacts for amd64; arm64 only after verified, SHA256SUMS, release notes and verified GitHub Release assets (ADR 0038). CI is green; first `v0.7.0` release run failed during setup because the provenance action SHA was invalid. No release assets exist yet; corrected pin is pending CI/release rerun.
+- [x] Release artifacts for amd64; arm64 only after verified, SHA256SUMS, release notes and verified GitHub Release assets (ADR 0038). Prerelease `v0.7.0` workflow 41723471957 passed and published the amd64 `.deb`, SPDX SBOM, `SHA256SUMS` and provenance. The tag is annotated but unsigned; GPG package signing is not claimed, so this does not satisfy production release readiness.
 - [x] Document migration of store DB format, downgrade and recoverability, data durability and backup/restore (ADR 0039).
 - [ ] External beta testers, issue triage, threat model review, compatibility limitations explicit (ADR 0040). Internal repository-grounded review is recorded in `dich-project-threat-model.md`, compatibility claims were corrected, and GitHub private vulnerability reporting is enabled; external tester results and issue-triage evidence are still missing.
 
@@ -78,4 +78,4 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Filesystem extraction resists malicious archives; privileged execution is minimized (ADR 0019, ADR 0034).
 - [x] Restart/recovery, profile switch, GC, shared references, and concurrent use covered by integration tests (ADR 0030, ADR 0039).
 - [x] Man pages and completions match CLI; `.deb` installs and removes cleanly on declared platforms (ADR 0038, CI deb-smoke). Hosted run 41717128407 verified package install, CLI help, man/completions, reinstall and removal in Debian Bookworm/Trixie and Ubuntu 22.04/24.04.
-- [ ] CI green, checksums published, changelog/support policy maintained (ADR 0037, ADR 0038). CI is green through run 41721280122; checksums have not been published because the tag workflow failed before building.
+- [x] CI green, checksums published, changelog/support policy maintained (ADR 0037, ADR 0038). Master CI run 41722390578 and release run 41723471957 passed; release assets include `SHA256SUMS`, and the workflow verified it with `sha256sum -c` before publication.

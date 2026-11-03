@@ -4,7 +4,7 @@ Assessment date: 2026-11-04. Scope: current local worktree based on `master` com
 
 ## Executive summary
 
-Dich is a local Rust CLI with no inbound listener. Its main security boundary is from operator-configured signing keys through HTTPS APT metadata to verified package bytes and into a private store/profile. Signature, digest, path and resource controls substantially reduce malicious mirror and archive risks. The highest residual risks are compromise of a trusted repository signing key, loading a selected DSO with caller privileges, same-user tampering or deletion of rollback state, and release-tag permissions that can publish a build. `dlmopen` isolates symbol lookup only; it is not a process sandbox. The project remains experimental. The first `v0.7.0` release attempt failed before job setup due to an invalid action pin; the corrected pin is covered by green master CI, but the release workflow must still be rerun.
+Dich is a local Rust CLI with no inbound listener. Its main security boundary is from operator-configured signing keys through HTTPS APT metadata to verified package bytes and into a private store/profile. Signature, digest, path and resource controls substantially reduce malicious mirror and archive risks. The highest residual risks are compromise of a trusted repository signing key, loading a selected DSO with caller privileges, same-user tampering or deletion of rollback state, and release-tag permissions that can publish a build. `dlmopen` isolates symbol lookup only; it is not a process sandbox. The project remains experimental. Prerelease `v0.7.0` completed hosted release run 41723471957 and published the package, SBOM, checksums and provenance; the tag is unsigned and this is not a production release.
 
 ## Scope and assumptions
 
@@ -133,7 +133,7 @@ Assumption that most affects these ratings: single trusted store owner. A shared
 ## Notes on use
 
 - Review covers repository evidence and configured controls; it does not prove absence of vulnerabilities, successful behavior under physical power loss, or independent human audit.
-- The `0.7.0` package has passed master CI; the release workflow has only had an initial setup failure and no GitHub Release assets are published in this assessment.
+- The `0.7.0` package and release workflow passed hosted checks and assets were published as a prerelease. Release signing/tag protection and external beta evidence remain incomplete.
 - External beta results and triage evidence are absent. Private vulnerability reporting was enabled on GitHub on 2026-11-04 (REST API response 204); no separate maintainer email is configured. Do not mark the combined beta roadmap item complete based on this internal review.
 - No response to the shared-host context question was received before this draft; single-operator use remains an explicit assumption.
 
