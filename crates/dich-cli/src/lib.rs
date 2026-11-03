@@ -27,8 +27,42 @@ pub struct Cli {
     /// Emit versioned JSON output and errors
     #[arg(long, global = true)]
     pub json: bool,
+    /// Structured log verbosity level (off, error, warn, info, debug)
+    #[arg(long, global = true, value_enum, default_value = "off")]
+    pub log_level: LogLevel,
+    /// Output operation progress to stderr
+    #[arg(long, global = true)]
+    pub progress: bool,
     #[command(subcommand)]
     pub command: Commands,
+}
+
+impl Cli {
+    pub fn effective_log_level(&self) -> LogLevel {
+        if self.log_level != LogLevel::Off {
+            return self.log_level;
+        }
+        if let Ok(val) = std::env::var("DICH_LOG") {
+            match val.to_lowercase().as_str() {
+                "error" => LogLevel::Error,
+                "warn" => LogLevel::Warn,
+                "info" => LogLevel::Info,
+                "debug" => LogLevel::Debug,
+                _ => LogLevel::Off,
+            }
+        } else {
+            LogLevel::Off
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+pub enum LogLevel {
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
 }
 
 #[derive(Debug, Subcommand)]
@@ -158,27 +192,173 @@ pub enum SourcesCommands {
     List,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliError {
     pub code: &'static str,
     pub message: &'static str,
     pub trace: Vec<String>,
 }
+
 impl CliError {
-    pub fn render(&self, json: bool) -> String {
-        if json {
-            serde_json::json!({"schema_version": 1, "status": "error", "error": {"code": self.code, "message": self.message, "trace": self.trace}}).to_string()
-        } else {
-            if self.trace.is_empty() {
-                format!("dich: error: {}", self.message)
-            } else {
-                format!("dich: error: {}\n{}", self.message, self.trace.join("\n"))
+    pub fn exit_code(&self) -> i32 {
+        match self.code {
+            "invalid_arguments" => 2,
+            "unsupported"
+            | "compatibility_rejected"
+            | "profile_conflict"
+            | "unsupported_platform"
+            | "inspection_rejected" => 3,
+            "unsatisfiable"
+            | "profile_missing"
+            | "rollback_unavailable"
+            | "package_not_found"
+            | "search_limit"
+            | "install_limit" => 4,
+            "integrity_rejected"
+            | "verification_failed"
+            | "signature_failed"
+            | "tampered_metadata" => 5,
+            _ => 1,
+        }
+    }
+
+    pub fn hint(&self) -> Option<&'static str> {
+        match self.code {
+            "unsupported" | "compatibility_rejected" => {
+                Some("Run 'dich inspect <deb>' to examine package compatibility constraints.")
             }
+            "store_open_failed" => {
+                Some("Verify the store directory path with --store-dir or check file permissions.")
+            }
+            "source_load_failed" => Some(
+                "Verify the source policy file with --config (default: /etc/dich/sources.toml).",
+            ),
+            "cache_unavailable" => Some(
+                "Verify the cache directory with --cache (default: /var/cache/dich) or run 'dich update'.",
+            ),
+            "unsatisfiable" => {
+                Some("Run 'dich search <package>' to view available package versions.")
+            }
+            "profile_missing" => Some("Run 'dich profile list' to view active profiles."),
+            "rollback_unavailable" => {
+                Some("The specified profile has no previous generation recorded.")
+            }
+            "missing_age" => {
+                Some("Specify --max-age-seconds to enforce signed Release metadata freshness.")
+            }
+            "missing_proxy" => {
+                Some("Specify --https-proxy <http://host:port> to configure proxy routing.")
+            }
+            "invalid_arguments" => {
+                Some("Run 'dich --help' or 'dich <command> --help' to see valid arguments.")
+            }
+            "unsupported_platform" => Some(
+                "Store and profile operations require a Linux environment with openat2 support.",
+            ),
+            _ => None,
+        }
+    }
+
+    pub fn render(&self, json: bool) -> String {
+        let redacted_message = dich_core::redact_sensitive(self.message);
+        let redacted_trace: Vec<String> = self
+            .trace
+            .iter()
+            .map(|t| dich_core::redact_sensitive(t))
+            .collect();
+        if json {
+            let mut err_obj = serde_json::json!({
+                "code": self.code,
+                "message": redacted_message,
+                "exit_code": self.exit_code(),
+                "trace": redacted_trace,
+            });
+            if let Some(hint) = self.hint() {
+                err_obj["hint"] = serde_json::Value::String(hint.to_string());
+            }
+            serde_json::json!({
+                "schema_version": 1,
+                "status": "error",
+                "error": err_obj,
+            })
+            .to_string()
+        } else {
+            let mut output = format!("dich: error: {redacted_message}");
+            if !redacted_trace.is_empty() {
+                output.push('\n');
+                output.push_str(&redacted_trace.join("\n"));
+            }
+            if let Some(hint) = self.hint() {
+                output.push_str(&format!("\nhint: {hint}"));
+            }
+            output
         }
     }
 }
 
+pub fn log_event(
+    configured_level: LogLevel,
+    json: bool,
+    level: LogLevel,
+    target: &str,
+    message: &str,
+    fields: &[(&str, &str)],
+) {
+    if configured_level == LogLevel::Off || level == LogLevel::Off || level > configured_level {
+        return;
+    }
+    let level_str = match level {
+        LogLevel::Error => "ERROR",
+        LogLevel::Warn => "WARN",
+        LogLevel::Info => "INFO",
+        LogLevel::Debug => "DEBUG",
+        LogLevel::Off => return,
+    };
+    let redacted_message = dich_core::redact_sensitive(message);
+    if json {
+        let mut field_map = serde_json::Map::new();
+        for (k, v) in fields {
+            field_map.insert(
+                k.to_string(),
+                serde_json::Value::String(dich_core::redact_sensitive(v)),
+            );
+        }
+        let log_obj = serde_json::json!({
+            "level": level_str,
+            "target": target,
+            "message": redacted_message,
+            "fields": field_map,
+        });
+        eprintln!("{}", serde_json::to_string(&log_obj).unwrap_or_default());
+    } else if fields.is_empty() {
+        eprintln!("[{level_str} {target}] {redacted_message}");
+    } else {
+        let field_strs: Vec<String> = fields
+            .iter()
+            .map(|(k, v)| format!("{k}={}", dich_core::redact_sensitive(v)))
+            .collect();
+        eprintln!(
+            "[{level_str} {target}] {redacted_message} ({})",
+            field_strs.join(", ")
+        );
+    }
+}
+
+pub fn report_progress(
+    progress_enabled: bool,
+    json: bool,
+    step: usize,
+    total: usize,
+    message: &str,
+) {
+    if progress_enabled && !json {
+        let redacted = dich_core::redact_sensitive(message);
+        eprintln!("[{step}/{total}] {redacted}");
+    }
+}
+
 pub fn run(cli: Cli) -> Result<(), CliError> {
+    let log_level = cli.effective_log_level();
     match cli.command {
         Commands::Plan {
             package,
@@ -439,6 +619,21 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     message: "could not open protected cache directory",
                     trace: Vec::new(),
                 })?;
+                report_progress(
+                    cli.progress,
+                    cli.json,
+                    1,
+                    2,
+                    "Authenticating repository metadata...",
+                );
+                log_event(
+                    log_level,
+                    cli.json,
+                    LogLevel::Info,
+                    "dich::update",
+                    "refreshing package repositories",
+                    &[("sources", &sources.len().to_string())],
+                );
                 let mut indices = 0usize;
                 for source in &sources {
                     let report = match proxy.as_ref() {
@@ -463,6 +658,13 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     })?;
                     indices += report.indices;
                 }
+                report_progress(
+                    cli.progress,
+                    cli.json,
+                    2,
+                    2,
+                    "Updated package indices successfully",
+                );
                 if cli.json {
                     println!(
                         "{}",
@@ -678,6 +880,21 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         message: "could not open protected cache directory",
                         trace: Vec::new(),
                     })?;
+                report_progress(
+                    cli.progress,
+                    cli.json,
+                    1,
+                    3,
+                    "Resolving authenticated package dependencies...",
+                );
+                log_event(
+                    log_level,
+                    cli.json,
+                    LogLevel::Info,
+                    "dich::install",
+                    "initiating package installation",
+                    &[("package", &package), ("profile", &profile)],
+                );
                 let plan = dich_engine::plan_install(
                     &sources[0],
                     &journal,
@@ -732,6 +949,13 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     }
                     return Ok(());
                 }
+                report_progress(
+                    cli.progress,
+                    cli.json,
+                    2,
+                    3,
+                    "Staging and validating package closure...",
+                );
                 let proxy = cli
                     .https_proxy
                     .as_deref()
@@ -755,6 +979,13 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     },
                 )
                 .map_err(map_install_error)?;
+                report_progress(
+                    cli.progress,
+                    cli.json,
+                    3,
+                    3,
+                    "Published profile generation successfully",
+                );
                 let objects: Vec<_> = report
                     .objects
                     .iter()
@@ -964,6 +1195,21 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                             trace: Vec::new(),
                         }
                     })?;
+                report_progress(
+                    cli.progress,
+                    cli.json,
+                    1,
+                    2,
+                    "Validating current and previous profile generations...",
+                );
+                log_event(
+                    log_level,
+                    cli.json,
+                    LogLevel::Info,
+                    "dich::rollback",
+                    "initiating profile rollback",
+                    &[("profile", &profile)],
+                );
                 let current = db
                     .read_profile_generation(&profile)
                     .map_err(|_| CliError {
@@ -1055,6 +1301,21 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                             trace: Vec::new(),
                         }
                     })?;
+                report_progress(
+                    cli.progress,
+                    cli.json,
+                    1,
+                    2,
+                    "Validating package profile generation for removal...",
+                );
+                log_event(
+                    log_level,
+                    cli.json,
+                    LogLevel::Info,
+                    "dich::remove",
+                    "initiating profile removal",
+                    &[("profile", &profile), ("package", &package)],
+                );
                 let current = db
                     .read_profile_generation(&profile)
                     .map_err(|_| CliError {
@@ -1274,6 +1535,21 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                             trace: Vec::new(),
                         }
                     })?;
+                report_progress(
+                    cli.progress,
+                    cli.json,
+                    1,
+                    2,
+                    "Enumerating active roots and analyzing reachability...",
+                );
+                log_event(
+                    log_level,
+                    cli.json,
+                    LogLevel::Info,
+                    "dich::gc",
+                    "running garbage collection",
+                    &[("mode", if execute { "execute" } else { "dry-run" })],
+                );
                 let report = db.collect_garbage(mode).map_err(|err| CliError {
                     code: "gc_failed",
                     message: match err {

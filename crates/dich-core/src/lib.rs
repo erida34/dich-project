@@ -3,8 +3,11 @@
 use std::{error::Error, fmt};
 
 pub mod admission;
+pub mod redaction;
 pub mod reference_graph;
 pub mod resolver;
+
+pub use redaction::redact_sensitive;
 
 /// The distribution must be selected explicitly by the operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

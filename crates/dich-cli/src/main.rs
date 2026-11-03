@@ -6,21 +6,19 @@ fn main() {
     let cli = match dich_cli::Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(error) if error.use_stderr() && json => {
-            eprintln!(
-                "{}",
-                dich_cli::CliError {
-                    code: "invalid_arguments",
-                    message: "invalid command-line arguments",
-                    trace: Vec::new()
-                }
-                .render(true)
-            );
-            std::process::exit(2);
+            let err = dich_cli::CliError {
+                code: "invalid_arguments",
+                message: "invalid command-line arguments",
+                trace: Vec::new(),
+            };
+            eprintln!("{}", err.render(true));
+            std::process::exit(err.exit_code());
         }
         Err(error) => error.exit(),
     };
     if let Err(error) = dich_cli::run(cli) {
+        let code = error.exit_code();
         eprintln!("{}", error.render(json));
-        std::process::exit(2);
+        std::process::exit(code);
     }
 }
