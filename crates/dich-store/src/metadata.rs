@@ -99,7 +99,7 @@ impl MetadataDb {
             )
             .map_err(|_| MetadataError::Sqlite)?;
         if !((created && app == 0 && version == 0 && empty == 0)
-            || (app == APPLICATION_ID && matches!(version, 1 | 2)))
+            || (app == APPLICATION_ID && matches!(version, 1..=3)))
         {
             return Err(MetadataError::UnknownSchema);
         }
@@ -112,10 +112,18 @@ impl MetadataDb {
                 return Err(MetadataError::UnknownSchema);
             }
         }
-        if app == APPLICATION_ID && version == 2 {
+        if app == APPLICATION_ID && version >= 2 {
             let sql: String = connection.query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'verified_archives'", [], |row| row.get(0)).map_err(|_| MetadataError::UnknownSchema)?;
             if sql
                 != "CREATE TABLE verified_archives (object_id TEXT PRIMARY KEY NOT NULL, manifest BLOB NOT NULL, artifact_size INTEGER NOT NULL, artifact_sha256 BLOB NOT NULL)"
+            {
+                return Err(MetadataError::UnknownSchema);
+            }
+        }
+        if app == APPLICATION_ID && version == 3 {
+            let sql: String = connection.query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'verified_trees'", [], |row| row.get(0)).map_err(|_| MetadataError::UnknownSchema)?;
+            if sql
+                != "CREATE TABLE verified_trees (object_id TEXT PRIMARY KEY NOT NULL, manifest BLOB NOT NULL, tree_manifest BLOB NOT NULL, total_size INTEGER NOT NULL)"
             {
                 return Err(MetadataError::UnknownSchema);
             }
@@ -150,6 +158,9 @@ impl MetadataDb {
         if version < 2 {
             migrate_to_v2(&mut connection, false)?;
         }
+        if version < 3 {
+            migrate_to_v3(&mut connection, false)?;
+        }
         for name in [
             "metadata.sqlite3-wal",
             "metadata.sqlite3-shm",
@@ -164,6 +175,12 @@ impl MetadataDb {
             _lock: lock,
             connection,
         })
+    }
+    #[cfg(test)]
+    pub(crate) fn test_tree_count(&self) -> i64 {
+        self.connection
+            .query_row("SELECT count(*) FROM verified_trees", [], |row| row.get(0))
+            .unwrap()
     }
     #[cfg(test)]
     pub(crate) fn test_object_count(&self) -> i64 {
@@ -200,6 +217,16 @@ fn migrate_to_v2(connection: &mut Connection, inject_failure: bool) -> Result<()
     tx.commit().map_err(|_| MetadataError::Sqlite)
 }
 
+fn migrate_to_v3(connection: &mut Connection, inject_failure: bool) -> Result<(), MetadataError> {
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| MetadataError::Sqlite)?;
+    tx.execute_batch("CREATE TABLE verified_trees (object_id TEXT PRIMARY KEY NOT NULL, manifest BLOB NOT NULL, tree_manifest BLOB NOT NULL, total_size INTEGER NOT NULL); PRAGMA user_version = 3;").map_err(|_| MetadataError::Sqlite)?;
+    if inject_failure {
+        return Err(MetadataError::Io);
+    }
+    tx.commit().map_err(|_| MetadataError::Sqlite)
+}
 fn acquire_lock(root: &OwnedFd) -> Result<OwnedFd, MetadataError> {
     let lock = fs::openat(
         root,

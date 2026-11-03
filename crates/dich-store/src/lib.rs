@@ -6,9 +6,13 @@ mod metadata;
 #[cfg(target_os = "linux")]
 mod publication;
 #[cfg(target_os = "linux")]
+mod tree;
+#[cfg(target_os = "linux")]
 pub use metadata::{MetadataDb, MetadataError};
 #[cfg(target_os = "linux")]
 pub use publication::{PublicationError, PublicationOutcome};
+#[cfg(target_os = "linux")]
+pub use tree::TreeOutcome;
 
 use sha2::{Digest, Sha256};
 use std::{error::Error, fmt};
@@ -713,5 +717,169 @@ mod publication_tests {
             )
             .is_ok()
         );
+    }
+}
+#[cfg(all(test, target_os = "linux"))]
+mod tree_tests {
+    use super::*;
+    use crate::metadata::MetadataDb;
+    use crate::publication::{FailurePoint, PublicationError};
+    use crate::tree::{TreeInput, TreeOutcome, publish_tree_for_test};
+    use sha2::{Digest, Sha256};
+    use std::{io::Read, os::unix::fs::PermissionsExt};
+    struct FixtureTree {
+        root: tempfile::TempDir,
+        directories: Vec<String>,
+        files: Vec<dich_deb::StagedFile>,
+    }
+    impl TreeInput for FixtureTree {
+        fn directories(&self) -> &[String] {
+            &self.directories
+        }
+        fn files(&self) -> &[dich_deb::StagedFile] {
+            &self.files
+        }
+        fn open(&self, path: &str) -> Result<Box<dyn Read>, PublicationError> {
+            Ok(Box::new(
+                std::fs::File::open(self.root.path().join(path))
+                    .map_err(|_| PublicationError::Io)?,
+            ))
+        }
+    }
+    fn fixture() -> (tempfile::TempDir, MetadataDb, StoreIdentity, FixtureTree) {
+        let root = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let db = MetadataDb::open(root.path()).unwrap();
+        let stage = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+        std::fs::create_dir(stage.path().join("usr")).unwrap();
+        std::fs::write(stage.path().join("usr/file"), b"hello").unwrap();
+        let file_hash = Sha256::digest(b"hello")
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let stage = FixtureTree {
+            root: stage,
+            directories: vec!["usr".into()],
+            files: vec![dich_deb::StagedFile {
+                path: "usr/file".into(),
+                size: 5,
+                sha256: file_hash,
+            }],
+        };
+        let material = IdentityMaterial {
+            name: "sample".into(),
+            version: "1".into(),
+            architecture: "amd64".into(),
+            distribution: "debian".into(),
+            suite: "bookworm".into(),
+            uri: "https://example.org/debian".into(),
+            source_architecture: "amd64".into(),
+            components: vec!["main".into()],
+            fingerprints: vec!["012345".into()],
+            artifact_path: "pool/main/s/sample.deb".into(),
+            artifact_size: 42,
+            artifact_sha256: [1; 32],
+            release_sha256: [2; 32],
+            policy: 1,
+        };
+        (root, db, identity_from_material(material).unwrap(), stage)
+    }
+    #[test]
+    fn publishes_tree_and_verifies_all_bytes_before_reuse() {
+        let (root, mut db, identity, stage) = fixture();
+        assert_eq!(
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap(),
+            TreeOutcome::Published
+        );
+        let path = root
+            .path()
+            .join("objects")
+            .join(format!("{}.tree/usr/file", identity.hex()));
+        assert_eq!(std::fs::read(&path).unwrap(), b"hello");
+        assert_eq!(
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap(),
+            TreeOutcome::Reused
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&path, b"wrong").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        assert!(publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).is_err());
+    }
+    #[test]
+    fn changed_staging_bytes_do_not_create_a_committed_tree() {
+        let (_root, mut db, identity, stage) = fixture();
+        std::fs::write(stage.root.path().join("usr/file"), b"wrong").unwrap();
+        assert!(publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).is_err());
+        assert_eq!(db.test_tree_count(), 0);
+    }
+    #[test]
+    fn rejects_unexpected_entries_and_links() {
+        use std::os::unix::fs::symlink;
+        for kind in ["extra", "symlink", "hardlink", "missing"] {
+            let (root, mut db, identity, stage) = fixture();
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+            let tree = root
+                .path()
+                .join("objects")
+                .join(format!("{}.tree/usr", identity.hex()));
+            let file = tree.join("file");
+            match kind {
+                "extra" => std::fs::write(tree.join("extra"), b"x").unwrap(),
+                "symlink" => {
+                    std::fs::remove_file(&file).unwrap();
+                    symlink(stage.root.path().join("usr/file"), &file).unwrap();
+                }
+                "hardlink" => {
+                    std::fs::remove_file(&file).unwrap();
+                    let target = stage.root.path().join("usr/file");
+                    std::fs::hard_link(target, &file).unwrap();
+                }
+                "missing" => std::fs::remove_file(&file).unwrap(),
+                _ => unreachable!(),
+            }
+            assert!(
+                publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).is_err(),
+                "{kind}"
+            );
+        }
+    }
+    #[test]
+    fn rejects_invalid_manifests_before_publication() {
+        for bad in [
+            "../escape",
+            "/absolute",
+            "usr/../bad",
+            "missing/file",
+            "usr//bad",
+        ] {
+            let (_root, mut db, identity, mut stage) = fixture();
+            stage.files[0].path = bad.into();
+            assert!(
+                publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).is_err(),
+                "{bad}"
+            );
+            assert_eq!(db.test_tree_count(), 0);
+        }
+    }
+    #[test]
+    fn interrupted_publication_recovers_or_reuses_verified_tree() {
+        for point in [
+            FailurePoint::BeforeFileSync,
+            FailurePoint::AfterFileSync,
+            FailurePoint::AfterRename,
+            FailurePoint::AfterDirectorySync,
+            FailurePoint::BeforeCommit,
+            FailurePoint::AfterCommit,
+        ] {
+            let (_root, mut db, identity, stage) = fixture();
+            assert!(publish_tree_for_test(&mut db, &identity, &stage, point).is_err());
+            let outcome =
+                publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+            assert!(matches!(
+                outcome,
+                TreeOutcome::Published | TreeOutcome::Reused
+            ));
+            assert_eq!(db.test_tree_count(), 1);
+        }
     }
 }

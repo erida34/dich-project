@@ -4,7 +4,7 @@ use dich_apt::{
     load_configured_sources, select_indexed_artifact,
 };
 use dich_store::{
-    IdentityComparison, MetadataDb, PublicationOutcome, StoreIdentity, TransformPolicy,
+    IdentityComparison, MetadataDb, PublicationOutcome, StoreIdentity, TransformPolicy, TreeOutcome,
 };
 use std::{
     path::Path,
@@ -60,4 +60,14 @@ fn identity_is_derived_from_reverified_cached_artifact() {
         IdentityComparison::SameIdentity
     );
     assert_ne!(archive_identity.digest(), first.digest());
+    let stage = dich_deb::stage_cached(&journal, &authorized, dich_deb::Limits::default()).unwrap();
+    let (tree_id, outcome) = store
+        .publish_cached_tree(&journal, &authorized, &stage)
+        .unwrap();
+    assert_eq!(outcome, TreeOutcome::Published);
+    assert_eq!(tree_id.compare(&first), IdentityComparison::SameIdentity);
+    let (_, outcome) = store
+        .publish_cached_tree(&journal, &authorized, &stage)
+        .unwrap();
+    assert_eq!(outcome, TreeOutcome::Reused);
 }

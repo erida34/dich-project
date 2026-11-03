@@ -48,7 +48,7 @@ pub(crate) enum FailurePoint {
     BeforeCommit,
     AfterCommit,
 }
-fn fail(actual: FailurePoint, expected: FailurePoint) -> Result<(), PublicationError> {
+pub(crate) fn fail(actual: FailurePoint, expected: FailurePoint) -> Result<(), PublicationError> {
     if actual == expected {
         #[cfg(test)]
         if std::env::var_os("DICH_INJECT_PROCESS_EXIT").is_some() {
@@ -200,7 +200,7 @@ pub(crate) fn publish_reader(
     fail(failure, FailurePoint::AfterCommit)?;
     Ok(PublicationOutcome::Published)
 }
-fn private_dir(root: &OwnedFd, name: &str) -> Result<OwnedFd, PublicationError> {
+pub(crate) fn private_dir(root: &OwnedFd, name: &str) -> Result<OwnedFd, PublicationError> {
     match fs::mkdirat(root, name, Mode::from_raw_mode(0o700)) {
         Ok(()) => fs::fsync(root).map_err(|_| PublicationError::Io)?,
         Err(rustix::io::Errno::EXIST) => (),
