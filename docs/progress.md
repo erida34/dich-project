@@ -153,6 +153,9 @@
 
 - 2026-11-03: Phase 7 supply chain security and provenance milestone verified and checked (ADR 0037): added `deny.toml` configuring `cargo-deny` with strict license allowlisting (MIT, Apache-2.0, BSD-2/3, ISC, Unicode), advisory checking, and source registry bounds. Added `audit.toml` for `cargo-audit` RustSec database scans. Documented dependency review criteria, license policy, reproducible build guidance (`SOURCE_DATE_EPOCH`, `--remap-path-prefix`), and SBOM/provenance specifications in `docs/dependency-and-license-policy.md`. Updated `.github/workflows/ci.yml` with pinned `EmbarkStudios/cargo-deny-action` and `rustsec/audit-check` gates, and updated `.github/workflows/release.yml` with SPDX SBOM generation and GitHub cryptographic provenance attestation (`actions/attest-build-provenance`). Full workspace checks passed in WSL. Next: Phase 7 Line 69 (GitHub Actions: format, clippy, tests, docs, real `.deb` install/upgrade/remove in clean target images).
 
+- 2026-11-03: Phase 7 CI matrix and clean-container smoke testing milestone verified and checked: updated `.github/workflows/ci.yml` with automated `.deb` packaging via pinned `cargo-deb 3.8.0` and containerized smoke test matrix covering `debian:bookworm-slim`, `debian:trixie-slim`, `ubuntu:22.04`, and `ubuntu:24.04`. Smoke tests verify successful package installation, execution of `/usr/bin/dich --help`, presence of all 19 man pages in `/usr/share/man/man1/` and bash/zsh/fish completions in vendor directories, package upgrade/reinstallation without conflicts, and complete uninstallation (`apt-get remove`) removing `/usr/bin/dich`. Verified `.deb` creation and contents locally. Full workspace checks passed in WSL. Next: Phase 7 Line 70 (Release artifacts for amd64; arm64 only after verified, SHA256SUMS, release notes and verified GitHub Release assets).
+
+
 
 
 
