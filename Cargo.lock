@@ -249,6 +249,7 @@ dependencies = [
  "dich-apt",
  "dich-elf",
  "rustix",
+ "serde",
  "sha2",
  "tar",
  "tempfile",
@@ -259,6 +260,7 @@ name = "dich-elf"
 version = "0.1.0"
 dependencies = [
  "goblin",
+ "serde",
 ]
 
 [[package]]

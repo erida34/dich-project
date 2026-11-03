@@ -106,6 +106,10 @@ fn inventories_host_integration_paths_without_claiming_compatibility() {
             .iter()
             .any(|marker| marker.marker == "systemctl")
     );
+    assert_eq!(
+        dich_deb::assess_compatibility(&report).status,
+        dich_deb::CompatibilityStatus::Unsupported
+    );
 }
 
 #[test]

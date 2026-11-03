@@ -56,6 +56,9 @@ fn reports_untrusted_archive_without_running_content() {
     assert_eq!(body["trust"], "unverified");
     assert_eq!(body["installable"], false);
     assert_eq!(body["data_files"], 1);
+    assert_eq!(body["compatibility_report"]["schema_version"], 1);
+    assert_eq!(body["compatibility_report"]["status"], "review_required");
+    assert!(body["compatibility_report"]["evidence"].is_array());
 }
 #[test]
 fn refuses_symlinks_fifos_oversized_and_malformed_files() {
@@ -128,6 +131,7 @@ fn inspection_reports_but_never_runs_maintainer_scripts() {
     );
     let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["scripts"][0]["name"], "postinst");
+    assert_eq!(body["compatibility_report"]["status"], "unsupported");
     assert!(!marker.exists());
 }
 #[test]

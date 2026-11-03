@@ -2,6 +2,7 @@
 //! Bounded, read-only ELF inventory. Reports evidence; it never approves compatibility.
 
 use goblin::elf::{Elf, header};
+use serde::Serialize;
 use std::{error::Error, fmt};
 
 pub const MAX_ELF_BYTES: usize = 128 * 1024 * 1024;
@@ -25,7 +26,7 @@ impl fmt::Display for ElfError {
 impl Error for ElfError {}
 
 /// Structural facts from an ELF header and its dynamic metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ElfReport {
     pub class_bits: u8,
     pub little_endian: bool,

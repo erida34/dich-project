@@ -648,6 +648,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     message: "could not safely inspect local Debian archive",
                     trace: Vec::new(),
                 })?;
+                let compatibility = dich_deb::assess_compatibility(&report);
                 if cli.json {
                     let scripts: Vec<_> = report
                         .scripts
@@ -656,10 +657,15 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         .collect();
                     println!(
                         "{}",
-                        serde_json::json!({"schema_version":1,"status":"completed","trust":"unverified","installable":false,"control_entries":report.control_entries,"control_files":report.control_files,"data_entries":report.data_entries,"data_files":report.data_files,"data_file_bytes":report.data_file_bytes,"scripts":scripts,"triggers_present":report.triggers_present})
+                        serde_json::json!({"schema_version":1,"status":"completed","trust":"unverified","installable":false,"control_entries":report.control_entries,"control_files":report.control_files,"data_entries":report.data_entries,"data_files":report.data_files,"data_file_bytes":report.data_file_bytes,"scripts":scripts,"triggers_present":report.triggers_present,"path_indicators":report.path_indicators,"elf_objects":report.elf_objects,"compatibility_report":compatibility})
                     );
                 } else {
                     println!("completed: unverified local archive; installability not established");
+                    println!(
+                        "compatibility: {} ({} evidence items)",
+                        compatibility.status.as_str(),
+                        compatibility.evidence.len()
+                    );
                     println!(
                         "control files: {}; data files: {}; data bytes: {}; triggers: {}",
                         report.control_files,

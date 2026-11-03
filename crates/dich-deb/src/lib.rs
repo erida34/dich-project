@@ -5,6 +5,7 @@ mod staging;
 #[cfg(target_os = "linux")]
 pub use staging::{StageError, StagedArchive, StagedFile, stage_cached};
 
+use serde::Serialize;
 use std::{
     error::Error,
     fmt,
@@ -52,13 +53,13 @@ impl fmt::Display for DebError {
     }
 }
 impl Error for DebError {}
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct ScriptMetadata {
     pub name: String,
     pub size: u64,
     pub sha256: String,
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct ArchiveReport {
     pub control_entries: usize,
     pub data_entries: usize,
@@ -72,12 +73,12 @@ pub struct ArchiveReport {
     pub path_indicators: PackagePathIndicators,
     pub elf_objects: Vec<ElfArchiveEvidence>,
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct ElfArchiveEvidence {
     pub path: String,
     pub report: dich_elf::ElfReport,
 }
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
 pub struct PackagePathIndicators {
     pub configuration_files: Vec<String>,
     pub service_units: Vec<String>,
@@ -88,22 +89,260 @@ pub struct PackagePathIndicators {
     pub embedded_absolute_paths: Vec<EmbeddedPathEvidence>,
     pub host_integration_markers: Vec<ContentMarkerEvidence>,
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct ShebangEvidence {
     pub file: String,
     pub value: String,
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct EmbeddedPathEvidence {
     pub file: String,
     pub line: usize,
     pub value: String,
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct ContentMarkerEvidence {
     pub file: String,
     pub line: usize,
     pub marker: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompatibilityStatus {
+    Supported,
+    Unsupported,
+    ReviewRequired,
+}
+impl CompatibilityStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Supported => "supported",
+            Self::Unsupported => "unsupported",
+            Self::ReviewRequired => "review_required",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct CompatibilityEvidence {
+    pub code: String,
+    pub path: Option<String>,
+    pub detail: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct CompatibilityReport {
+    pub schema_version: u32,
+    pub status: CompatibilityStatus,
+    pub evidence: Vec<CompatibilityEvidence>,
+}
+
+/// Produce an evidence-based compatibility status. Current policy never returns `supported`;
+/// that result requires a later explicit package-class allowlist and validated fixtures.
+pub fn assess_compatibility(archive: &ArchiveReport) -> CompatibilityReport {
+    let mut evidence = Vec::new();
+    let mut blocked = false;
+    let mut add = |code: &str, path: Option<&str>, detail: String, unsupported: bool| {
+        blocked |= unsupported;
+        if evidence.len() < 512 {
+            evidence.push(CompatibilityEvidence {
+                code: code.to_owned(),
+                path: path.map(str::to_owned),
+                detail,
+            });
+        }
+    };
+    for script in &archive.scripts {
+        add(
+            "maintainer_script",
+            Some(&format!("DEBIAN/{}", script.name)),
+            "package contains an unexecuted maintainer script".into(),
+            true,
+        );
+    }
+    if archive.triggers_present {
+        add(
+            "maintainer_triggers",
+            Some("DEBIAN/triggers"),
+            "package declares maintainer triggers whose effects are not analyzed".into(),
+            true,
+        );
+    }
+    for path in &archive.path_indicators.service_units {
+        add(
+            "service_unit",
+            Some(path),
+            "system service integration is outside the supported store model".into(),
+            true,
+        );
+    }
+    for marker in &archive.path_indicators.host_integration_markers {
+        let unsupported = matches!(
+            marker.marker.as_str(),
+            "systemctl"
+                | "deb-systemd-invoke"
+                | "invoke-rc.d"
+                | "update-rc.d"
+                | "ldconfig"
+                | "locale-gen"
+        );
+        add(
+            "host_integration_command",
+            Some(&marker.file),
+            format!("line {} references {}", marker.line, marker.marker),
+            unsupported,
+        );
+    }
+    for reference in &archive.path_indicators.embedded_absolute_paths {
+        add(
+            "embedded_absolute_path",
+            Some(&reference.file),
+            format!("line {} contains {}", reference.line, reference.value),
+            false,
+        );
+    }
+    for path in &archive.path_indicators.configuration_files {
+        add(
+            "configuration_file",
+            Some(path),
+            "package writes configuration under /etc".into(),
+            false,
+        );
+    }
+    for path in &archive.path_indicators.pkg_config_files {
+        add(
+            "pkg_config_metadata",
+            Some(path),
+            "pkg-config metadata may expose absolute build paths".into(),
+            false,
+        );
+    }
+    for path in &archive.path_indicators.cmake_files {
+        add(
+            "cmake_metadata",
+            Some(path),
+            "CMake metadata may expose absolute build paths".into(),
+            false,
+        );
+    }
+    for path in &archive.path_indicators.nss_locale_files {
+        add(
+            "nss_locale_integration",
+            Some(path),
+            "NSS or locale behavior requires runtime review".into(),
+            false,
+        );
+    }
+    for elf in &archive.elf_objects {
+        if let Some(interpreter) = &elf.report.interpreter {
+            add(
+                "elf_interpreter",
+                Some(&elf.path),
+                format!("requires interpreter {interpreter}"),
+                false,
+            );
+        }
+        for library in &elf.report.needed {
+            add(
+                "elf_needed",
+                Some(&elf.path),
+                format!("needs dynamic library {library}"),
+                false,
+            );
+        }
+        for path in elf.report.rpath.iter().chain(&elf.report.runpath) {
+            add(
+                "elf_search_path",
+                Some(&elf.path),
+                format!("embeds loader search path {path}"),
+                false,
+            );
+        }
+        if !elf.report.required_symbol_versions.is_empty() {
+            add(
+                "elf_symbol_versions",
+                Some(&elf.path),
+                format!(
+                    "requires {} symbol versions; libc compatibility is not established",
+                    elf.report.required_symbol_versions.len()
+                ),
+                false,
+            );
+        }
+        if !elf.report.dynamic_loading_symbols.is_empty() {
+            add(
+                "elf_dynamic_loading",
+                Some(&elf.path),
+                format!(
+                    "imports dynamic loading functions: {}",
+                    elf.report.dynamic_loading_symbols.join(", ")
+                ),
+                false,
+            );
+        }
+    }
+    if evidence.is_empty() {
+        evidence.push(CompatibilityEvidence {
+            code: "no_allowlist_match".into(),
+            path: None,
+            detail: "absence of detected indicators is not compatibility evidence".into(),
+        });
+    } else if evidence.len() == 512 {
+        evidence[511] = CompatibilityEvidence {
+            code: "evidence_truncated".into(),
+            path: None,
+            detail: "additional findings were omitted from this bounded report".into(),
+        };
+    }
+    CompatibilityReport {
+        schema_version: 1,
+        status: if blocked {
+            CompatibilityStatus::Unsupported
+        } else {
+            CompatibilityStatus::ReviewRequired
+        },
+        evidence,
+    }
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    fn empty_archive() -> ArchiveReport {
+        ArchiveReport {
+            control_entries: 0,
+            data_entries: 0,
+            control_files: 0,
+            data_files: 0,
+            control_file_bytes: 0,
+            data_file_bytes: 0,
+            scripts: Vec::new(),
+            triggers_present: false,
+            path_indicators: PackagePathIndicators::default(),
+            elf_objects: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn empty_evidence_requires_review_and_never_claims_support() {
+        let report = assess_compatibility(&empty_archive());
+        assert_eq!(report.schema_version, 1);
+        assert_eq!(report.status, CompatibilityStatus::ReviewRequired);
+        assert_eq!(report.evidence[0].code, "no_allowlist_match");
+    }
+
+    #[test]
+    fn evidence_output_is_bounded_and_keeps_conservative_status() {
+        let mut archive = empty_archive();
+        archive.path_indicators.configuration_files =
+            (0..700).map(|n| format!("etc/example/{n}.conf")).collect();
+        let report = assess_compatibility(&archive);
+        assert_eq!(report.status, CompatibilityStatus::ReviewRequired);
+        assert_eq!(report.evidence.len(), 512);
+        assert_eq!(report.evidence[511].code, "evidence_truncated");
+    }
 }
 
 /// Inspect a bounded .deb; no authenticity or installability is implied.

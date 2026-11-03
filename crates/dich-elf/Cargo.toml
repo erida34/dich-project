@@ -8,3 +8,4 @@ rust-version.workspace = true
 
 [dependencies]
 goblin = { version = "=0.9.3", default-features = false, features = ["elf32", "elf64", "endian_fd"] }
+serde = { version = "1", features = ["derive"] }
