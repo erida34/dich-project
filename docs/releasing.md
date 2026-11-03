@@ -11,7 +11,7 @@ Use semver tags `vX.Y.Z`, update changelog, validate the exact release commit, b
 5. Test installation of Dich itself (not package manager semantics) inside throwaway Debian/Ubuntu containers and verify `man dich`, shell completion file locations and uninstallation.
 
 ## GitHub Actions
-`ci.yml` runs Rust checks, dependency/license audits and a four-distribution `.deb` smoke matrix. Package builds run on Ubuntu 22.04 to keep the executable's glibc requirement at or below the declared 2.35 baseline; a package built on Ubuntu 24.04 was observed to require libc6 2.39 and would not install on Ubuntu 22.04 or Debian Bookworm. `release.yml` rejects a tag whose SemVer does not match the package version, repeats the locked code/audit gates, builds amd64 `.deb`, and smoke-tests pinned amd64 manifests for Debian 12 Bookworm, Debian 13 Trixie, Ubuntu 22.04 Jammy and Ubuntu 24.04 Noble, including installation, reinstallation and removal. It generates SPDX 2.3 dependency data with pinned `cargo-sbom` 0.10.0, includes the scoped webpki root-data license, and hashes the `.deb` plus SBOM in `SHA256SUMS`. Actions and release-image manifests are pinned to immutable commits/digests; `cargo-deb` is pinned to 3.8.0. The hosted Jammy build, minimum libc dependency, hosted workflows and GitHub release assets remain unverified until CI runs in GitHub and a repository remote is available. Docker is unavailable in the current WSL distro. GitHub build provenance is configured; GPG artifact signing is not claimed.
+`ci.yml` runs Rust checks, dependency/license audits and a four-distribution `.deb` smoke matrix. Package builds run on Ubuntu 22.04 to keep the executable's glibc requirement at or below the declared 2.35 baseline; the hosted package build produced `libc6 >= 2.34`. Hosted CI run 41717128407 passed Rust checks and the package install/reinstall/remove matrix on Debian 12 Bookworm, Debian 13 Trixie, Ubuntu 22.04 Jammy and Ubuntu 24.04 Noble. `release.yml` rejects a tag whose SemVer does not match the package version, repeats the locked code/audit gates, builds amd64 `.deb`, and smoke-tests the same pinned images. It generates SPDX 2.3 dependency data with pinned `cargo-sbom` 0.10.0, includes the scoped webpki root-data license, and hashes the `.deb` plus SBOM in `SHA256SUMS`. Actions and release-image manifests are pinned to immutable commits/digests; `cargo-deb` is pinned to 3.8.0. The tag-triggered release workflow and GitHub release assets remain unverified. Docker is unavailable in the current WSL distro. GitHub build provenance is configured; GPG artifact signing is not claimed.
 
 ## Release Artifacts and Architecture Policy
 
@@ -20,13 +20,13 @@ Use semver tags `vX.Y.Z`, update changelog, validate the exact release commit, b
    - `arm64` is deferred until native runner verification and container smoke testing are integrated; no unverified cross-compiled binaries are published (ADR 0038).
 
 2. **Published Assets on GitHub Releases**:
-   - `dich_<upstream-version>-<debian-revision>_amd64.deb`: Debian package (for example, `dich_0.1.0-1_amd64.deb`).
+   - `dich_<upstream-version>-<debian-revision>_amd64.deb`: Debian package (for example, `dich_0.7.0-1_amd64.deb`).
    - `SHA256SUMS`: SHA-256 digests of all released files.
 - `dich.spdx.json`: Machine-readable SPDX 2.3 SBOM generated from the locked `dich-cli` dependency graph.
    - Cryptographic build provenance attestations generated via `actions/attest-build-provenance`.
 
 3. **Release Gate Verification**:
-   Before release publication, `.github/workflows/release.yml` builds the release package and executes containerized smoke tests in pinned Debian and Ubuntu base images, verifying installation, manual page indexing, vendor completions, upgrade, and clean removal.
+   Before release publication, `.github/workflows/release.yml` builds the release package and executes containerized smoke tests in pinned Debian and Ubuntu base images, verifying installation, manual page indexing, vendor completions, reinstall and clean removal. Hosted CI run 41717128407 passed this smoke matrix for the current pre-version-bump commit. The release-tag workflow itself has not run and no GitHub Release assets are published.
 
 
 ## Opt-in live fetch check

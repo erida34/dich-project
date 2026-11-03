@@ -14,7 +14,7 @@ The project roadmap requires:
 ### 1. Primary Release Architecture (`amd64`)
 - The primary supported release architecture for Dich v0.7.x / v1.0 is **Linux `amd64` (x86_64)**.
 - Each release tag (`v*`) triggers an automated build on Ubuntu GitHub-hosted runners producing:
-  - `dich_<upstream-version>-<debian-revision>_amd64.deb` conforming to Debian packaging standards (for example, `dich_0.1.0-1_amd64.deb`).
+  - `dich_<upstream-version>-<debian-revision>_amd64.deb` conforming to Debian packaging standards (for example, `dich_0.7.0-1_amd64.deb`).
   - Executable `/usr/bin/dich`.
   - Manual pages in `/usr/share/man/man1/` (19 man pages).
   - Shell completion scripts installed in standard system vendor paths:

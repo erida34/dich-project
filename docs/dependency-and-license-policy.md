@@ -63,5 +63,5 @@ Official GitHub Releases publish cryptographically signed build provenance attes
 - Verifies that the `.deb` release artifacts were built from the immutable commit tag on the official repository runners.
 - Verification command:
   ```sh
-  gh attestation verify dich_0.1.0-1_amd64.deb --owner dich-project
+  gh attestation verify dich_0.7.0-1_amd64.deb --owner dich-project
   ```

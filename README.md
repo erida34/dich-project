@@ -39,7 +39,7 @@ Dich verifies packages against explicit glibc and native architecture baselines 
 ## Installation
 
 ### From Debian Package (`.deb`)
-Download the release artifact `dich_<upstream-version>-<debian-revision>_amd64.deb` from GitHub Releases (for example, `dich_0.1.0-1_amd64.deb`):
+Download the release artifact `dich_<upstream-version>-<debian-revision>_amd64.deb` from GitHub Releases (for example, `dich_0.7.0-1_amd64.deb`):
 ```sh
 sudo dpkg -i dich_<upstream-version>-<debian-revision>_amd64.deb
 ```
