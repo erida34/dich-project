@@ -8,6 +8,8 @@ mod inspect;
 #[cfg(target_os = "linux")]
 mod metadata;
 #[cfg(target_os = "linux")]
+mod profiles;
+#[cfg(target_os = "linux")]
 mod publication;
 #[cfg(target_os = "linux")]
 mod recovery;
@@ -19,6 +21,8 @@ pub use graph::GraphOutcome;
 pub use inspect::{ObjectKind, ObjectRecord};
 #[cfg(target_os = "linux")]
 pub use metadata::{MetadataDb, MetadataError};
+#[cfg(target_os = "linux")]
+pub use profiles::{ProfileGeneration, ProfileOutcome};
 #[cfg(target_os = "linux")]
 pub use publication::{ArchiveVerification, PublicationError, PublicationOutcome};
 #[cfg(target_os = "linux")]
@@ -1618,5 +1622,99 @@ mod tree_tests {
         let graph = ReferenceGraph::new(&[&identity.hex()], &[]).unwrap();
         assert!(db.put_reference_graph(&graph).is_err());
         assert_eq!(db.test_graph_count(), 0);
+    }
+    #[test]
+    fn profile_generation_uses_immutable_manifest_and_atomic_current_symlink() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let (root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let first_id = identity.hex();
+        let first_graph = ReferenceGraph::new(&[&first_id], &[]).unwrap();
+        let (first_graph_id, _) = db.put_reference_graph(&first_graph).unwrap();
+
+        let (first, outcome) = db
+            .publish_profile_generation("default", &first_graph_id)
+            .unwrap();
+        assert_eq!(outcome, crate::ProfileOutcome::Switched);
+        assert_eq!(first.graph, first_graph);
+        assert_eq!(
+            std::fs::read_link(root.path().join("profiles/default/current")).unwrap(),
+            std::path::PathBuf::from(format!("generations/{}", first.generation_id))
+        );
+        let manifest = root
+            .path()
+            .join("profiles/default")
+            .join("generations")
+            .join(&first.generation_id);
+        assert_eq!(
+            std::fs::metadata(&manifest).unwrap().permissions().mode() & 0o777,
+            0o400
+        );
+        assert_eq!(
+            db.read_profile_generation("default").unwrap().unwrap(),
+            first
+        );
+        assert_eq!(
+            db.publish_profile_generation("default", &first_graph_id)
+                .unwrap()
+                .1,
+            crate::ProfileOutcome::Reused
+        );
+
+        let second_identity = identity_from_material({
+            IdentityMaterial {
+                name: "sample".into(),
+                version: "2".into(),
+                architecture: "amd64".into(),
+                distribution: "debian".into(),
+                suite: "bookworm".into(),
+                uri: "https://example.org/debian".into(),
+                source_architecture: "amd64".into(),
+                components: vec!["main".into()],
+                fingerprints: vec!["012345".into()],
+                artifact_path: "pool/main/s/sample.deb".into(),
+                artifact_size: 42,
+                artifact_sha256: [3; 32],
+                release_sha256: [2; 32],
+                policy: 1,
+            }
+        })
+        .unwrap();
+        publish_tree_for_test(&mut db, &second_identity, &stage, FailurePoint::None).unwrap();
+        let second_id = second_identity.hex();
+        let second_graph = ReferenceGraph::new(&[&second_id], &[]).unwrap();
+        let (second_graph_id, _) = db.put_reference_graph(&second_graph).unwrap();
+        let (second, outcome) = db
+            .publish_profile_generation("default", &second_graph_id)
+            .unwrap();
+        assert_eq!(outcome, crate::ProfileOutcome::Switched);
+        assert_ne!(first.generation_id, second.generation_id);
+        assert!(manifest.exists(), "prior generation is retained");
+        assert_eq!(db.list_profiles().unwrap(), vec![second]);
+    }
+
+    #[test]
+    fn profile_generation_rejects_unsafe_names_missing_graphs_and_pointer_escape() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let (root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let id = identity.hex();
+        let graph = ReferenceGraph::new(&[&id], &[]).unwrap();
+        let (graph_id, _) = db.put_reference_graph(&graph).unwrap();
+        assert!(
+            db.publish_profile_generation("../escape", &graph_id)
+                .is_err()
+        );
+        assert!(
+            db.publish_profile_generation("missing", &"f".repeat(64))
+                .is_err()
+        );
+        db.publish_profile_generation("safe", &graph_id).unwrap();
+
+        let profile = root.path().join("profiles/safe");
+        std::fs::remove_file(profile.join("current")).unwrap();
+        std::os::unix::fs::symlink("../../outside", profile.join("current")).unwrap();
+        assert!(db.read_profile_generation("safe").is_err());
+        assert!(db.list_profiles().is_err());
     }
 }

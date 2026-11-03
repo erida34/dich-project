@@ -48,7 +48,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Fixture integration tests on Ubuntu Noble and Debian 13 WSL for two allowed plugin versions sharing one DSO dependency (separate runtime checks; no mixed-suite, repository-authenticity, install, or activation claim; ADR 0027).
 
 ## Phase 5 — profiles, transactions and garbage collection (v0.6.x)
-- [ ] Explicit profiles backed by atomic generation symlinks and manifest including immutable store references.
+- [x] Explicit profiles backed by atomic relative `current` symlinks and content-derived manifests containing committed store graph references (metadata validated; object bytes are not reverified here; no package files are installed or activated).
 - [ ] `dich install`, `dich remove`, `dich profile list`, `dich rollback` only for supported subset, with dry-run and confirmation.
 - [ ] Prevent in-place mutation; concurrent transactions, rollback recovery, interruption/failure injection, idempotent replay policy.
 - [ ] Mark-and-sweep GC from profiles, pins and active leases; prevent deletion of active objects; dry-run by default for potentially destructive changes.

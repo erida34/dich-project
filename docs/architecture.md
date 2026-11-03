@@ -20,7 +20,7 @@ Original signed apt repositories -> verified metadata/artifacts -> deterministic
 /var/lib/dich/state.sqlite           metadata DB (once initialized)
 /var/cache/dich/                      verified metadata/blob cache
 /var/lib/dich/store/<identity>/       immutable objects (provisional path)
-/var/lib/dich/profiles/<name>/        generation manifests/symlinks
+/var/lib/dich/profiles/<name>/        generations/<sha256> manifests; current -> generations/<sha256>
 /var/log/dich/                        only if file logging explicitly enabled
 ```
 
