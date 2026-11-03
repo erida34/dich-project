@@ -198,3 +198,22 @@ fn empty_initialization_recovery_refuses_existing_state_and_sidecars() {
         assert!(path.exists());
     }
 }
+
+#[test]
+fn empty_initialization_recovery_refuses_nonempty_or_linked_database() {
+    let root = private_dir();
+    let db = root.path().join("metadata.sqlite3");
+    std::fs::write(&db, b"not empty").unwrap();
+    std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(MetadataDb::recover_empty_initialization(root.path()).is_err());
+    assert_eq!(std::fs::read(&db).unwrap(), b"not empty");
+    std::fs::remove_file(&db).unwrap();
+    let external = tempfile::NamedTempFile::new_in(std::env::var_os("HOME").unwrap()).unwrap();
+    std::fs::hard_link(external.path(), &db).unwrap();
+    assert!(MetadataDb::recover_empty_initialization(root.path()).is_err());
+    assert!(db.exists());
+    std::fs::remove_file(&db).unwrap();
+    symlink(external.path(), &db).unwrap();
+    assert!(MetadataDb::recover_empty_initialization(root.path()).is_err());
+    assert!(db.symlink_metadata().unwrap().file_type().is_symlink());
+}
