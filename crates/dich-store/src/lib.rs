@@ -984,4 +984,67 @@ mod tree_tests {
         assert_eq!(report.unexpected.len(), 2);
         assert!(stage.root.path().join("usr/file").exists());
     }
+    #[test]
+    fn explicit_staging_cleanup_is_confined_and_retriable() {
+        let (root, mut db, identity, stage) = fixture();
+        assert!(
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::BeforeFileSync)
+                .is_err()
+        );
+        let name = db.recovery_inventory().unwrap().staged.remove(0);
+        db.remove_staged(&name).unwrap();
+        assert!(db.recovery_inventory().unwrap().staged.is_empty());
+        assert!(db.remove_staged("../outside").is_err());
+        assert!(root.path().join("metadata.sqlite3").exists());
+    }
+    #[test]
+    fn staging_cleanup_refuses_symlink_escape() {
+        use std::os::unix::fs::symlink;
+        let (root, mut db, identity, stage) = fixture();
+        assert!(
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::BeforeFileSync)
+                .is_err()
+        );
+        let name = db.recovery_inventory().unwrap().staged.remove(0);
+        let staged = root.path().join("staging").join(&name);
+        symlink(stage.root.path(), staged.join("escape")).unwrap();
+        assert!(db.remove_staged(&name).is_err());
+        assert!(stage.root.path().join("usr/file").exists());
+    }
+    #[test]
+    #[ignore = "subprocess cleanup crash helper"]
+    fn cleanup_child_exits_after_unlink() {
+        let Some(root) = std::env::var_os("DICH_CLEANUP_ROOT") else {
+            return;
+        };
+        let name = std::env::var("DICH_CLEANUP_NAME").unwrap();
+        let mut db = MetadataDb::open(std::path::Path::new(&root)).unwrap();
+        let _ = db.remove_staged(&name);
+        panic!("injected cleanup exit did not occur");
+    }
+    #[test]
+    fn interrupted_cleanup_can_be_retried() {
+        let (root, mut db, identity, stage) = fixture();
+        assert!(
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::BeforeFileSync)
+                .is_err()
+        );
+        let name = db.recovery_inventory().unwrap().staged.remove(0);
+        drop(db);
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "tree_tests::cleanup_child_exits_after_unlink",
+            ])
+            .env("DICH_CLEANUP_ROOT", root.path())
+            .env("DICH_CLEANUP_NAME", &name)
+            .env("DICH_INJECT_CLEANUP_EXIT", "1")
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(87));
+        let mut db = MetadataDb::open(root.path()).unwrap();
+        db.remove_staged(&name).unwrap();
+        assert!(db.recovery_inventory().unwrap().staged.is_empty());
+    }
 }

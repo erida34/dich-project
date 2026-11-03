@@ -3,7 +3,8 @@ use crate::{
     MetadataDb,
     publication::{PublicationError, private_dir},
 };
-use rustix::fs::{self, AtFlags, FileType};
+use rustix::fs::{self, AtFlags, FileType, Mode, OFlags, ResolveFlags};
+use rustix::process::geteuid;
 use std::{collections::BTreeSet, os::fd::OwnedFd};
 
 /// Names only; inventory does not verify content or remove anything.
@@ -124,5 +125,123 @@ impl MetadataDb {
         inventory.missing_trees.sort();
         inventory.unexpected.sort();
         Ok(inventory)
+    }
+}
+
+fn open_child(dir: &OwnedFd, name: &str, is_dir: bool) -> Result<OwnedFd, PublicationError> {
+    let mut flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
+    if is_dir {
+        flags |= OFlags::DIRECTORY;
+    }
+    fs::openat2(
+        dir,
+        name,
+        flags,
+        Mode::empty(),
+        ResolveFlags::BENEATH
+            | ResolveFlags::NO_SYMLINKS
+            | ResolveFlags::NO_MAGICLINKS
+            | ResolveFlags::NO_XDEV,
+    )
+    .map_err(|_| PublicationError::UnsafePath)
+}
+fn check_entry(fd: &OwnedFd, is_dir: bool, device: u64) -> Result<(), PublicationError> {
+    let stat = fs::fstat(fd).map_err(|_| PublicationError::Io)?;
+    let kind = FileType::from_raw_mode(stat.st_mode);
+    if stat.st_dev != device
+        || (stat.st_uid != 0 && stat.st_uid != geteuid().as_raw())
+        || if is_dir {
+            kind != FileType::Directory || stat.st_mode & 0o7777 != 0o700
+        } else {
+            kind != FileType::RegularFile
+                || stat.st_nlink != 1
+                || !matches!(stat.st_mode & 0o7777, 0o400 | 0o600)
+        }
+    {
+        return Err(PublicationError::Integrity);
+    }
+    Ok(())
+}
+fn visit(
+    dir: &OwnedFd,
+    device: u64,
+    depth: usize,
+    remaining: &mut usize,
+    remove: bool,
+) -> Result<(), PublicationError> {
+    if depth > 128 {
+        return Err(PublicationError::Limit);
+    }
+    check_entry(dir, true, device)?;
+    for (name, kind) in names(dir)? {
+        *remaining = remaining.checked_sub(1).ok_or(PublicationError::Limit)?;
+        let is_dir = match kind {
+            FileType::Directory => true,
+            FileType::RegularFile => false,
+            _ => return Err(PublicationError::UnsafePath),
+        };
+        let fd = open_child(dir, &name, is_dir)?;
+        check_entry(&fd, is_dir, device)?;
+        if is_dir {
+            visit(&fd, device, depth + 1, remaining, remove)?;
+        }
+        if remove {
+            fs::unlinkat(
+                dir,
+                &name,
+                if is_dir {
+                    AtFlags::REMOVEDIR
+                } else {
+                    AtFlags::empty()
+                },
+            )
+            .map_err(|_| PublicationError::Io)?;
+            #[cfg(test)]
+            if std::env::var_os("DICH_INJECT_CLEANUP_EXIT").is_some() {
+                std::process::exit(87);
+            }
+        }
+    }
+    if remove {
+        fs::fsync(dir).map_err(|_| PublicationError::Io)?;
+    }
+    Ok(())
+}
+impl MetadataDb {
+    /// Explicitly remove one recognized incomplete staging entry. No object or metadata row is removed.
+    /// A failure can leave a partially removed entry; retry is safe under the store lock.
+    pub fn remove_staged(&mut self, name: &str) -> Result<(), PublicationError> {
+        let tree = name.strip_prefix("tree-").is_some_and(|v| valid_hex(v, 32));
+        let archive = name
+            .strip_prefix("stage-")
+            .is_some_and(|v| valid_hex(v, 32));
+        if !tree && !archive {
+            return Err(PublicationError::UnsafePath);
+        }
+        let staging = private_dir(&self.root, "staging")?;
+        let fd = match open_child(&staging, name, tree) {
+            Ok(fd) => fd,
+            Err(_) => return Err(PublicationError::UnsafePath),
+        };
+        let device = fs::fstat(&staging)
+            .map_err(|_| PublicationError::Io)?
+            .st_dev;
+        check_entry(&fd, tree, device)?;
+        if tree {
+            visit(&fd, device, 0, &mut 35_000, false)?;
+            visit(&fd, device, 0, &mut 35_000, true)?;
+        }
+        fs::unlinkat(
+            &staging,
+            name,
+            if tree {
+                AtFlags::REMOVEDIR
+            } else {
+                AtFlags::empty()
+            },
+        )
+        .map_err(|_| PublicationError::Io)?;
+        fs::fsync(&staging).map_err(|_| PublicationError::Io)?;
+        Ok(())
     }
 }
