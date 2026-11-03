@@ -26,7 +26,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Deterministic resolver and `dich plan` with explainable decisions, cycles/conflicts/unsat traces (bounded single-source metadata subset; unsupported cases fail closed).
 - [x] Pin exact package version, repository snapshot digest, architecture, source identity and artifact SHA256 in lock/plan (informational plan output; no persistent lock replay).
 - [x] Reject operations involving unsupported dpkg actions, service managers, kernel modules, unknown package triggers or global state (execution currently denied for all packages; no archive action detection yet).
-- [ ] Resolver tests for duplicate names/versions, virtual packages, conflicts, downgrades, cyclic dependencies, arch mismatch.
+- [x] Resolver tests for duplicate names/versions, virtual packages, conflicts, downgrades, cyclic dependencies, arch mismatch (downgrade test uses an explicit fixture baseline; profile transitions remain unimplemented).
 
 ## Phase 3 — safe artifact handling and immutable store (v0.4.x)
 - [ ] Read `.deb` ar envelope, control/data tar streams, limits for entries/expanded bytes/files/nesting/path lengths.

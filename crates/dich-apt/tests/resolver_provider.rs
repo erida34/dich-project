@@ -296,3 +296,72 @@ fn predepends_graph_validation_has_a_hard_work_limit() {
         Err(ResolveError::LimitExceeded)
     ));
 }
+
+#[test]
+fn explicit_baseline_refuses_implicit_downgrades() {
+    use dich_core::resolver::ResolveError;
+    let fixture = b"Package: root\nVersion: 1\nArchitecture: amd64\nDepends: library (= 1)\n\nPackage: library\nVersion: 1\nArchitecture: amd64\n\nPackage: library\nVersion: 2\nArchitecture: amd64\n";
+    let stanzas = parse_control_stanzas(fixture).unwrap();
+    let universe =
+        DebianUniverse::from_stanzas_with_baseline(&stanzas, "amd64", &[("library", "2")]).unwrap();
+    let result = resolve(
+        &universe,
+        vec![universe.require("root").unwrap()],
+        SearchLimits::default(),
+    );
+    assert!(matches!(result, Err(ResolveError::Unsupported { .. })));
+    let empty = DebianUniverse::from_stanzas(&stanzas, "amd64").unwrap();
+    assert!(
+        resolve(
+            &empty,
+            vec![empty.require("root").unwrap()],
+            SearchLimits::default()
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn source_architecture_mismatch_cannot_produce_a_solution() {
+    use dich_core::resolver::ResolveError;
+    let fixture = b"Package: root\nVersion: 1\nArchitecture: amd64\nDepends: library\n\nPackage: library\nVersion: 1\nArchitecture: arm64\n";
+    let universe =
+        DebianUniverse::from_stanzas(&parse_control_stanzas(fixture).unwrap(), "amd64").unwrap();
+    assert!(matches!(
+        resolve(
+            &universe,
+            vec![universe.require("root").unwrap()],
+            SearchLimits::default()
+        ),
+        Err(ResolveError::Unsupported { .. })
+    ));
+}
+
+#[test]
+fn baseline_uses_debian_epoch_order_and_rejects_ambiguity() {
+    let fixture = b"Package: root\nVersion: 1\nArchitecture: amd64\nDepends: library (= 99)\n\nPackage: library\nVersion: 99\nArchitecture: amd64\n";
+    let stanzas = parse_control_stanzas(fixture).unwrap();
+    let universe =
+        DebianUniverse::from_stanzas_with_baseline(&stanzas, "amd64", &[("library", "1:1")])
+            .unwrap();
+    assert!(matches!(
+        resolve(
+            &universe,
+            vec![universe.require("root").unwrap()],
+            SearchLimits::default()
+        ),
+        Err(dich_core::resolver::ResolveError::Unsupported { .. })
+    ));
+    assert!(
+        DebianUniverse::from_stanzas_with_baseline(
+            &stanzas,
+            "amd64",
+            &[("library", "1"), ("library", "2")]
+        )
+        .is_err()
+    );
+    assert!(
+        DebianUniverse::from_stanzas_with_baseline(&stanzas, "amd64", &[("library", "invalid")])
+            .is_err()
+    );
+}

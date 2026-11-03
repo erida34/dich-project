@@ -23,6 +23,40 @@ pub struct DebianUniverse {
     names: BTreeMap<String, Vec<usize>>,
 }
 impl DebianUniverse {
+    /// An explicit test-only baseline prevents implicit downgrades; it is not read from host state.
+    pub fn from_stanzas_with_baseline(
+        stanzas: &[ControlStanza],
+        architecture: &str,
+        baseline: &[(&str, &str)],
+    ) -> Result<Self, UniverseError> {
+        if baseline.len() > 100_000 {
+            return Err(UniverseError);
+        }
+        let mut versions = BTreeMap::new();
+        for (name, version) in baseline {
+            let parsed = parse_dependencies(name).map_err(|_| UniverseError)?;
+            if parsed.len() != 1
+                || parsed[0].alternatives().len() != 1
+                || parsed[0].alternatives()[0].name() != *name
+            {
+                return Err(UniverseError);
+            }
+            let version = DebianVersion::parse(version).map_err(|_| UniverseError)?;
+            if versions.insert(*name, version).is_some() {
+                return Err(UniverseError);
+            }
+        }
+        let mut universe = Self::from_stanzas(stanzas, architecture)?;
+        for candidate in &mut universe.candidates {
+            if versions
+                .get(candidate.name.as_str())
+                .is_some_and(|version| candidate.version < *version)
+            {
+                candidate.supported = false;
+            }
+        }
+        Ok(universe)
+    }
     /// Parses untrusted stanzas for fixture evaluation. Does not authenticate or authorize anything.
     pub fn from_stanzas(
         stanzas: &[ControlStanza],
