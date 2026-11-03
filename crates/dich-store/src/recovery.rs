@@ -25,7 +25,8 @@ fn valid_hex(value: &str, length: usize) -> bool {
 }
 fn names(dir: &OwnedFd) -> Result<Vec<(String, FileType)>, PublicationError> {
     let mut result = Vec::new();
-    let mut reader = fs::Dir::read_from(dir).map_err(|_| PublicationError::Io)?;
+    let fresh = open_child(dir, ".", true)?;
+    let mut reader = fs::Dir::read_from(&fresh).map_err(|_| PublicationError::Io)?;
     while let Some(entry) = reader.read() {
         let entry = entry.map_err(|_| PublicationError::Io)?;
         let name = entry

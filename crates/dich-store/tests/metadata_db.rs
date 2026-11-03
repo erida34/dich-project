@@ -217,3 +217,76 @@ fn empty_initialization_recovery_refuses_nonempty_or_linked_database() {
     assert!(MetadataDb::recover_empty_initialization(root.path()).is_err());
     assert!(db.symlink_metadata().unwrap().file_type().is_symlink());
 }
+
+#[test]
+fn interrupted_initialization_marker_allows_safe_restart() {
+    let root = private_dir();
+    let marker = root.path().join("metadata.initializing");
+    std::fs::write(&marker, b"dich-metadata-init-v1\n").unwrap();
+    std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(root.path().join("metadata.sqlite3"), b"").unwrap();
+    std::fs::set_permissions(
+        root.path().join("metadata.sqlite3"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    assert_eq!(
+        MetadataDb::open(root.path())
+            .unwrap()
+            .schema_version()
+            .unwrap(),
+        3
+    );
+    assert!(!marker.exists());
+}
+#[test]
+fn invalid_initialization_marker_never_authorizes_an_empty_database() {
+    let root = private_dir();
+    let marker = root.path().join("metadata.initializing");
+    std::fs::write(&marker, b"unrecognized").unwrap();
+    std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(root.path().join("metadata.sqlite3"), b"").unwrap();
+    std::fs::set_permissions(
+        root.path().join("metadata.sqlite3"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    assert!(MetadataDb::open(root.path()).is_err());
+    assert!(marker.exists());
+}
+
+#[test]
+fn missing_database_or_marker_never_hides_existing_store_objects() {
+    for with_marker in [false, true] {
+        let root = private_dir();
+        std::fs::create_dir(root.path().join("objects")).unwrap();
+        std::fs::write(root.path().join("objects/sentinel"), b"keep").unwrap();
+        if with_marker {
+            let marker = root.path().join("metadata.initializing");
+            std::fs::write(&marker, b"dich-metadata-init-v1\n").unwrap();
+            std::fs::set_permissions(marker, std::fs::Permissions::from_mode(0o600)).unwrap();
+            std::fs::write(root.path().join("metadata.sqlite3"), b"").unwrap();
+            std::fs::set_permissions(
+                root.path().join("metadata.sqlite3"),
+                std::fs::Permissions::from_mode(0o600),
+            )
+            .unwrap();
+        }
+        assert!(MetadataDb::open(root.path()).is_err());
+        assert_eq!(
+            std::fs::read(root.path().join("objects/sentinel")).unwrap(),
+            b"keep"
+        );
+    }
+}
+
+#[test]
+fn missing_database_with_sidecar_is_not_recreated() {
+    let root = private_dir();
+    let wal = root.path().join("metadata.sqlite3-wal");
+    std::fs::write(&wal, b"unexamined").unwrap();
+    std::fs::set_permissions(&wal, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(MetadataDb::open(root.path()).is_err());
+    assert!(!root.path().join("metadata.sqlite3").exists());
+    assert_eq!(std::fs::read(wal).unwrap(), b"unexamined");
+}

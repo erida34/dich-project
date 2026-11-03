@@ -7,6 +7,7 @@ use rustix::{
 use std::{
     error::Error,
     fmt,
+    io::{Read, Write},
     os::fd::OwnedFd,
     path::{Component, Path},
     time::Duration,
@@ -76,18 +77,28 @@ impl MetadataDb {
             check_sidecar(&root, name)?;
         }
         let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
-        let (file, created) = match fs::openat(
-            &root,
-            "metadata.sqlite3",
-            flags | OFlags::CREATE | OFlags::EXCL,
-            Mode::from_raw_mode(0o600),
-        ) {
-            Ok(file) => (file, true),
-            Err(rustix::io::Errno::EXIST) => (
-                fs::openat(&root, "metadata.sqlite3", flags, Mode::empty())
-                    .map_err(|_| MetadataError::UnsafePath)?,
-                false,
-            ),
+        let mut initializing = check_init_marker(&root)?;
+        let (file, created) = match fs::openat(&root, "metadata.sqlite3", flags, Mode::empty()) {
+            Ok(file) => (file, false),
+            Err(rustix::io::Errno::NOENT) => {
+                ensure_initializing_directory(&root, false)?;
+                if !initializing {
+                    create_init_marker(&root)?;
+                    initializing = true;
+                }
+                #[cfg(test)]
+                init_crash("after_marker");
+                let file = fs::openat(
+                    &root,
+                    "metadata.sqlite3",
+                    flags | OFlags::CREATE | OFlags::EXCL,
+                    Mode::from_raw_mode(0o600),
+                )
+                .map_err(|_| MetadataError::UnsafePath)?;
+                #[cfg(test)]
+                init_crash("after_create");
+                (file, true)
+            }
             Err(_) => return Err(MetadataError::UnsafePath),
         };
         check_file(&file)?;
@@ -126,7 +137,7 @@ impl MetadataDb {
                 |row| row.get(0),
             )
             .map_err(|_| MetadataError::Sqlite)?;
-        if !((created && app == 0 && version == 0 && empty == 0)
+        if !(((created || initializing) && app == 0 && version == 0 && empty == 0)
             || (app == APPLICATION_ID && matches!(version, 1..=3)))
         {
             return Err(MetadataError::UnknownSchema);
@@ -176,18 +187,29 @@ impl MetadataDb {
         connection
             .pragma_update(None, "trusted_schema", "OFF")
             .map_err(|_| MetadataError::Sqlite)?;
+        #[cfg(test)]
+        if initializing {
+            init_crash("after_wal");
+        }
         if app == 0 {
+            ensure_initializing_directory(&root, true)?;
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|_| MetadataError::Sqlite)?;
             transaction.execute_batch("CREATE TABLE publication_intents (object_id TEXT PRIMARY KEY NOT NULL, stage_name TEXT NOT NULL, created_at INTEGER NOT NULL); PRAGMA application_id = 1145652040; PRAGMA user_version = 1;").map_err(|_| MetadataError::Sqlite)?;
             transaction.commit().map_err(|_| MetadataError::Sqlite)?;
+            #[cfg(test)]
+            init_crash("after_schema");
         }
         if version < 2 {
             migrate_to_v2(&mut connection, false)?;
         }
         if version < 3 {
             migrate_to_v3(&mut connection, false)?;
+        }
+        #[cfg(test)]
+        if initializing {
+            init_crash("after_migrations");
         }
         for name in [
             "metadata.sqlite3-wal",
@@ -197,6 +219,11 @@ impl MetadataDb {
             check_sidecar(&root, name)?;
         }
         fs::fsync(&root).map_err(|_| MetadataError::Io)?;
+        if initializing {
+            fs::unlinkat(&root, "metadata.initializing", AtFlags::empty())
+                .map_err(|_| MetadataError::Io)?;
+            fs::fsync(&root).map_err(|_| MetadataError::Io)?;
+        }
         Ok(Self {
             root,
             _file: file,
@@ -233,6 +260,91 @@ impl MetadataDb {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(|_| MetadataError::Sqlite)
     }
+}
+#[cfg(test)]
+fn init_crash(point: &str) {
+    if std::env::var("DICH_INIT_CRASH").ok().as_deref() == Some(point) {
+        std::process::exit(88);
+    }
+}
+fn ensure_initializing_directory(
+    root: &OwnedFd,
+    allow_sidecars: bool,
+) -> Result<(), MetadataError> {
+    let fresh = fs::openat(
+        root,
+        ".",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| MetadataError::UnsafePath)?;
+    let mut reader = fs::Dir::read_from(&fresh).map_err(|_| MetadataError::Io)?;
+    while let Some(entry) = reader.read() {
+        let entry = entry.map_err(|_| MetadataError::Io)?;
+        let name = entry.file_name().to_bytes();
+        if !allow_sidecars
+            && matches!(
+                name,
+                b"metadata.sqlite3-wal" | b"metadata.sqlite3-shm" | b"metadata.sqlite3-journal"
+            )
+        {
+            return Err(MetadataError::UnknownSchema);
+        }
+        if !matches!(
+            name,
+            b"." | b".."
+                | b"metadata.lock"
+                | b"metadata.initializing"
+                | b"metadata.sqlite3"
+                | b"metadata.sqlite3-wal"
+                | b"metadata.sqlite3-shm"
+                | b"metadata.sqlite3-journal"
+        ) {
+            return Err(MetadataError::UnknownSchema);
+        }
+    }
+    Ok(())
+}
+const INIT_MARKER: &[u8] = b"dich-metadata-init-v1\n";
+fn check_init_marker(root: &OwnedFd) -> Result<bool, MetadataError> {
+    let fd = match fs::openat(
+        root,
+        "metadata.initializing",
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+        Mode::empty(),
+    ) {
+        Ok(fd) => fd,
+        Err(rustix::io::Errno::NOENT) => return Ok(false),
+        Err(_) => return Err(MetadataError::UnsafePath),
+    };
+    check_file(&fd)?;
+    if fs::fstat(&fd).map_err(|_| MetadataError::Io)?.st_size != INIT_MARKER.len() as i64 {
+        return Err(MetadataError::UnknownSchema);
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::from(fd)
+        .take((INIT_MARKER.len() + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| MetadataError::Io)?;
+    if bytes != INIT_MARKER {
+        return Err(MetadataError::UnknownSchema);
+    }
+    Ok(true)
+}
+fn create_init_marker(root: &OwnedFd) -> Result<(), MetadataError> {
+    let fd = fs::openat(
+        root,
+        "metadata.initializing",
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::from_raw_mode(0o600),
+    )
+    .map_err(|_| MetadataError::UnsafePath)?;
+    let mut marker = std::fs::File::from(fd);
+    marker
+        .write_all(INIT_MARKER)
+        .map_err(|_| MetadataError::Io)?;
+    marker.sync_all().map_err(|_| MetadataError::Io)?;
+    fs::fsync(root).map_err(|_| MetadataError::Io)
 }
 fn migrate_to_v2(connection: &mut Connection, inject_failure: bool) -> Result<(), MetadataError> {
     let tx = connection
@@ -430,5 +542,40 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(version, 3);
+    }
+    #[test]
+    #[ignore = "subprocess initialization crash helper"]
+    fn initialization_crash_child() {
+        let Some(root) = std::env::var_os("DICH_INIT_ROOT") else {
+            return;
+        };
+        let _ = MetadataDb::open(std::path::Path::new(&root));
+        panic!("expected injected initialization exit");
+    }
+    #[test]
+    fn initialization_restarts_after_process_exit_at_each_boundary() {
+        for point in [
+            "after_marker",
+            "after_create",
+            "after_wal",
+            "after_schema",
+            "after_migrations",
+        ] {
+            let root = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+            std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "metadata::tests::initialization_crash_child",
+                ])
+                .env("DICH_INIT_ROOT", root.path())
+                .env("DICH_INIT_CRASH", point)
+                .status()
+                .unwrap();
+            assert_eq!(status.code(), Some(88), "{point}");
+            let db = MetadataDb::open(root.path()).unwrap_or_else(|e| panic!("{point}: {e}"));
+            assert_eq!(db.schema_version().unwrap(), 3);
+        }
     }
 }
