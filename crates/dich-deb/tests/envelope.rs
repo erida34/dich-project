@@ -39,6 +39,74 @@ fn reads_common_debian_envelope_and_both_tar_streams() {
     assert_eq!(report.data_entries, 1);
     assert_eq!(report.data_file_bytes, 5);
 }
+
+#[test]
+fn inventories_host_integration_paths_without_claiming_compatibility() {
+    let control = tar_with_file("control", b"Package: sample\nVersion: 1\n");
+    let mut data = Vec::new();
+    {
+        let mut tar = tar::Builder::new(&mut data);
+        for (path, content) in [
+            ("etc/sample.conf", b"include=/etc/sample.d\n".as_slice()),
+            (
+                "usr/lib/systemd/system/sample.service",
+                b"[Service]\nExecStart=/usr/bin/sample\nsystemctl restart sample\n".as_slice(),
+            ),
+            (
+                "usr/lib/x86_64-linux-gnu/pkgconfig/sample.pc",
+                b"prefix=/usr/local\nlibdir=${prefix}/lib\n".as_slice(),
+            ),
+            (
+                "usr/lib/cmake/Sample/SampleConfig.cmake",
+                b"set(SAMPLE_ROOT /opt/sample)\n".as_slice(),
+            ),
+            ("etc/nsswitch.conf", b"passwd: files\n".as_slice()),
+            (
+                "usr/share/locale/en/LC_MESSAGES/sample.mo",
+                b"locale-data".as_slice(),
+            ),
+            (
+                "usr/bin/sample-helper",
+                b"#!/bin/sh\nsystemctl start sample\n".as_slice(),
+            ),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, path, content).unwrap();
+        }
+        tar.finish().unwrap();
+    }
+    let bytes = deb(&[
+        ("debian-binary", b"2.0\n"),
+        ("control.tar", &control),
+        ("data.tar", &data),
+    ]);
+    let report = inspect_deb(&bytes, Limits::default()).unwrap();
+    assert_eq!(report.path_indicators.configuration_files.len(), 2);
+    assert_eq!(report.path_indicators.service_units.len(), 1);
+    assert_eq!(report.path_indicators.pkg_config_files.len(), 1);
+    assert_eq!(report.path_indicators.cmake_files.len(), 1);
+    assert_eq!(report.path_indicators.nss_locale_files.len(), 2);
+    assert_eq!(report.path_indicators.shebangs.len(), 1);
+    assert_eq!(report.path_indicators.shebangs[0].value, "#!/bin/sh");
+    assert!(
+        report
+            .path_indicators
+            .embedded_absolute_paths
+            .iter()
+            .any(|reference| reference.file.ends_with("sample.pc")
+                && reference.value == "/usr/local")
+    );
+    assert!(
+        report
+            .path_indicators
+            .host_integration_markers
+            .iter()
+            .any(|marker| marker.marker == "systemctl")
+    );
+}
 #[test]
 fn rejects_wrong_order_duplicate_members_truncation_and_size_limits() {
     let control = tar_with_file("control", b"metadata");

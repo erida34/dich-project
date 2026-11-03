@@ -39,7 +39,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 
 ## Phase 4 — compatibility analyzer and opt-in relocation (v0.5.x)
 - [x] Identify ELF objects, interpreter, SONAME, NEEDED, RPATH/RUNPATH, dlopen risks, dynamic loader interactions, symbol versions and libc constraints (bounded byte-level evidence API only; no `.deb` traversal or compatibility approval yet; ADR 0022).
-- [ ] Scan absolute embedded paths, script shebangs, pkg-config/CMake paths, config files, maintainer triggers, service integration, NSS/locale requirements.
+- [ ] Scan absolute embedded paths, script shebangs, pkg-config/CMake paths, config files, maintainer triggers, service integration, NSS/locale requirements. Partial: bounded heuristic path/content indicators are reported by `.deb` inspection (ADR 0023); ELF-to-archive integration and broader semantic coverage remain incomplete.
 - [ ] Produce machine-readable compatibility report with `supported`, `unsupported`, `review_required` and evidence.
 - [ ] Initial allowlisted relocatable *library-only* package subset and fixture-based policy; all others fail closed.
 - [ ] Evaluate alternatives: direct original prefix, patched ELF RUNPATH, wrapper/loader, mount namespaces. ADR before selecting and implementing one.

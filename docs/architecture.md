@@ -37,6 +37,8 @@ Control and Debian version parsers support cached package name/version queries, 
 
 `dich-elf` exposes bounded single-object ELF evidence through the pinned Goblin parser: interpreter, SONAME, NEEDED, RPATH/RUNPATH, required symbol versions and direct dynamic-loader imports (ADR 0022). It is not yet wired to package-tree traversal and does not approve ABI compatibility or relocation.
 
+The `.deb` inspector also records heuristic configuration/service/pkg-config/CMake/NSS/locale paths, text absolute-path tokens, shebangs and selected service/host command markers (ADR 0023). This evidence is not yet combined with ELF reports into a compatibility decision.
+
 ## Invariants
 - No store object is published prior to full verification.
 - No version is activated without a fully validated dependency closure.

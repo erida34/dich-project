@@ -68,6 +68,36 @@ pub struct ArchiveReport {
     pub data_file_bytes: u64,
     pub scripts: Vec<ScriptMetadata>,
     pub triggers_present: bool,
+    /// File locations requiring explicit compatibility review; path names alone are not policy.
+    pub path_indicators: PackagePathIndicators,
+}
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PackagePathIndicators {
+    pub configuration_files: Vec<String>,
+    pub service_units: Vec<String>,
+    pub pkg_config_files: Vec<String>,
+    pub cmake_files: Vec<String>,
+    pub nss_locale_files: Vec<String>,
+    pub shebangs: Vec<ShebangEvidence>,
+    pub embedded_absolute_paths: Vec<EmbeddedPathEvidence>,
+    pub host_integration_markers: Vec<ContentMarkerEvidence>,
+}
+#[derive(Debug, PartialEq, Eq)]
+pub struct ShebangEvidence {
+    pub file: String,
+    pub value: String,
+}
+#[derive(Debug, PartialEq, Eq)]
+pub struct EmbeddedPathEvidence {
+    pub file: String,
+    pub line: usize,
+    pub value: String,
+}
+#[derive(Debug, PartialEq, Eq)]
+pub struct ContentMarkerEvidence {
+    pub file: String,
+    pub line: usize,
+    pub marker: String,
 }
 
 /// Inspect a bounded .deb; no authenticity or installability is implied.
@@ -108,33 +138,46 @@ pub fn inspect_deb(bytes: &[u8], limits: Limits) -> Result<ArchiveReport, DebErr
     }
     let control = decompress(formats[0], &members[1], limits.max_expanded_tar_bytes)?;
     let data = decompress(formats[1], &members[2], limits.max_expanded_tar_bytes)?;
-    let (control_entries, control_files, control_file_bytes, scripts, triggers_present) =
-        inspect_tar(&control, limits, true)?;
-    let (data_entries, data_files, data_file_bytes, _, _) = inspect_tar(&data, limits, false)?;
-    if control_entries
-        .checked_add(data_entries)
+    let control_report = inspect_tar(&control, limits, true)?;
+    let data_report = inspect_tar(&data, limits, false)?;
+    if control_report
+        .entries
+        .checked_add(data_report.entries)
         .ok_or(DebError::Limit)?
         > limits.max_entries
-        || control_files
-            .checked_add(data_files)
+        || control_report
+            .files
+            .checked_add(data_report.files)
             .ok_or(DebError::Limit)?
             > limits.max_files
-        || control_file_bytes
-            .checked_add(data_file_bytes)
+        || control_report
+            .total_bytes
+            .checked_add(data_report.total_bytes)
             .ok_or(DebError::Limit)?
             > limits.max_total_file_bytes
     {
         return Err(DebError::Limit);
     }
+    let mut path_indicators = data_report.path_indicators;
+    path_indicators
+        .shebangs
+        .extend(control_report.path_indicators.shebangs);
+    path_indicators
+        .embedded_absolute_paths
+        .extend(control_report.path_indicators.embedded_absolute_paths);
+    path_indicators
+        .host_integration_markers
+        .extend(control_report.path_indicators.host_integration_markers);
     Ok(ArchiveReport {
-        control_entries,
-        data_entries,
-        control_files,
-        data_files,
-        control_file_bytes,
-        data_file_bytes,
-        scripts,
-        triggers_present,
+        control_entries: control_report.entries,
+        data_entries: data_report.entries,
+        control_files: control_report.files,
+        data_files: data_report.files,
+        control_file_bytes: control_report.total_bytes,
+        data_file_bytes: data_report.total_bytes,
+        scripts: control_report.scripts,
+        triggers_present: control_report.triggers_present,
+        path_indicators,
     })
 }
 
@@ -243,11 +286,16 @@ fn preflight_ar(bytes: &[u8]) -> Result<[Compression; 2], DebError> {
     }
     Ok(formats)
 }
-fn inspect_tar(
-    bytes: &[u8],
-    limits: Limits,
-    control: bool,
-) -> Result<(usize, usize, u64, Vec<ScriptMetadata>, bool), DebError> {
+struct TarReport {
+    entries: usize,
+    files: usize,
+    total_bytes: u64,
+    scripts: Vec<ScriptMetadata>,
+    triggers_present: bool,
+    path_indicators: PackagePathIndicators,
+}
+
+fn inspect_tar(bytes: &[u8], limits: Limits, control: bool) -> Result<TarReport, DebError> {
     if bytes.len() < 1024 || bytes.len() % 512 != 0 {
         return Err(DebError::Malformed);
     }
@@ -258,6 +306,7 @@ fn inspect_tar(
     let mut control_files = 0usize;
     let mut scripts = Vec::new();
     let mut triggers_present = false;
+    let mut path_indicators = PackagePathIndicators::default();
     let mut paths: std::collections::BTreeMap<Vec<u8>, bool> = std::collections::BTreeMap::new();
     {
         let entries = archive
@@ -283,6 +332,9 @@ fn inspect_tar(
                 return Err(DebError::Unsupported);
             }
             let normalized = normalize_path(&path, kind.is_dir())?;
+            if !control && kind.is_file() {
+                record_path_indicators(&mut path_indicators, &normalized)?;
+            }
             if paths.contains_key(&normalized) {
                 return Err(DebError::Malformed);
             }
@@ -320,7 +372,7 @@ fn inspect_tar(
                 }
                 triggers_present = true;
             }
-            paths.insert(normalized, kind.is_dir());
+            paths.insert(normalized.clone(), kind.is_dir());
             if kind.is_file() {
                 files = files.checked_add(1).ok_or(DebError::Limit)?;
                 if files > limits.max_files {
@@ -341,35 +393,33 @@ fn inspect_tar(
             if total > limits.max_total_file_bytes {
                 return Err(DebError::Limit);
             }
-            let copied = if let Some(name) = metadata_name {
+            let mut content =
+                Vec::with_capacity(usize::try_from(size).map_err(|_| DebError::Limit)?);
+            entry
+                .by_ref()
+                .take(size.checked_add(1).ok_or(DebError::Limit)?)
+                .read_to_end(&mut content)
+                .map_err(|_| DebError::Malformed)?;
+            if content.len() as u64 != size {
+                return Err(DebError::Malformed);
+            }
+            let scan_path = if control {
+                format!("DEBIAN/{}", String::from_utf8_lossy(&normalized))
+            } else {
+                String::from_utf8(normalized.clone()).map_err(|_| DebError::Unsupported)?
+            };
+            scan_content_indicators(&mut path_indicators, &scan_path, &content)?;
+            if let Some(name) = metadata_name {
                 use sha2::{Digest, Sha256};
-                let mut digest = Sha256::new();
-                let mut buf = [0u8; 8192];
-                let mut count = 0u64;
-                loop {
-                    let read = entry.read(&mut buf).map_err(|_| DebError::Malformed)?;
-                    if read == 0 {
-                        break;
-                    }
-                    digest.update(&buf[..read]);
-                    count = count.checked_add(read as u64).ok_or(DebError::Limit)?;
-                }
-                let hash: String = digest
-                    .finalize()
+                let hash: String = Sha256::digest(&content)
                     .iter()
                     .map(|byte| format!("{byte:02x}"))
                     .collect();
                 scripts.push(ScriptMetadata {
                     name: name.into(),
-                    size: count,
+                    size,
                     sha256: hash,
                 });
-                count
-            } else {
-                std::io::copy(&mut entry, &mut std::io::sink()).map_err(|_| DebError::Malformed)?
-            };
-            if copied != size {
-                return Err(DebError::Malformed);
             }
         }
     }
@@ -383,7 +433,131 @@ fn inspect_tar(
     if control && control_files != 1 {
         return Err(DebError::Malformed);
     }
-    Ok((count, files, total, scripts, triggers_present))
+    Ok(TarReport {
+        entries: count,
+        files,
+        total_bytes: total,
+        scripts,
+        triggers_present,
+        path_indicators,
+    })
+}
+
+fn record_path_indicators(
+    indicators: &mut PackagePathIndicators,
+    path: &[u8],
+) -> Result<(), DebError> {
+    let path = std::str::from_utf8(path).map_err(|_| DebError::Unsupported)?;
+    let lower = path.to_ascii_lowercase();
+    let file_name = lower.rsplit('/').next().unwrap_or(&lower);
+    let record = |collection: &mut Vec<String>| -> Result<(), DebError> {
+        if collection.len() >= 2048 || path.len() > 4096 {
+            return Err(DebError::Limit);
+        }
+        collection.push(path.to_owned());
+        Ok(())
+    };
+    if lower.starts_with("etc/") {
+        record(&mut indicators.configuration_files)?;
+    }
+    if [
+        "lib/systemd/system/",
+        "usr/lib/systemd/system/",
+        "usr/lib/systemd/user/",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+        && [
+            ".service", ".socket", ".target", ".timer", ".path", ".mount", ".slice",
+        ]
+        .iter()
+        .any(|suffix| file_name.ends_with(suffix))
+    {
+        record(&mut indicators.service_units)?;
+    }
+    if file_name.ends_with(".pc") {
+        record(&mut indicators.pkg_config_files)?;
+    }
+    if file_name.ends_with(".cmake") || lower.contains("/cmake/") {
+        record(&mut indicators.cmake_files)?;
+    }
+    if lower == "etc/nsswitch.conf"
+        || lower.starts_with("usr/share/locale/")
+        || lower.starts_with("usr/lib/locale/")
+        || file_name.starts_with("libnss_")
+    {
+        record(&mut indicators.nss_locale_files)?;
+    }
+    Ok(())
+}
+
+fn scan_content_indicators(
+    indicators: &mut PackagePathIndicators,
+    file: &str,
+    bytes: &[u8],
+) -> Result<(), DebError> {
+    if bytes.starts_with(b"#!") {
+        let end = bytes
+            .iter()
+            .position(|b| *b == b'\n')
+            .unwrap_or(bytes.len());
+        let value = std::str::from_utf8(&bytes[..end]).map_err(|_| DebError::Unsupported)?;
+        if value.len() > 4096 || indicators.shebangs.len() >= 4096 {
+            return Err(DebError::Limit);
+        }
+        indicators.shebangs.push(ShebangEvidence {
+            file: file.to_owned(),
+            value: value.to_owned(),
+        });
+    }
+    if bytes.contains(&0) {
+        return Ok(());
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Ok(());
+    };
+    for (line_index, line) in text.lines().enumerate() {
+        for token in line.split(|c: char| c.is_ascii_whitespace() || "=\"'(),;".contains(c)) {
+            if token.starts_with('/') {
+                if indicators.embedded_absolute_paths.len() >= 4096 || token.len() > 4096 {
+                    return Err(DebError::Limit);
+                }
+                indicators
+                    .embedded_absolute_paths
+                    .push(EmbeddedPathEvidence {
+                        file: file.to_owned(),
+                        line: line_index + 1,
+                        value: token.to_owned(),
+                    });
+            }
+        }
+        for marker in [
+            "systemctl",
+            "deb-systemd-invoke",
+            "invoke-rc.d",
+            "update-rc.d",
+            "ldconfig",
+            "locale-gen",
+            "nsswitch.conf",
+        ] {
+            if line
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+                .any(|word| word == marker)
+            {
+                if indicators.host_integration_markers.len() >= 4096 {
+                    return Err(DebError::Limit);
+                }
+                indicators
+                    .host_integration_markers
+                    .push(ContentMarkerEvidence {
+                        file: file.to_owned(),
+                        line: line_index + 1,
+                        marker: marker.to_owned(),
+                    });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn normalize_path(path: &[u8], directory: bool) -> Result<Vec<u8>, DebError> {
