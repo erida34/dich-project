@@ -89,3 +89,37 @@ The closure runtime fixture preloads dependency DSOs in dependency-first order w
 Profile generations are SHA256-addressed manifests switched by relative symlink rename after fsyncs (ADR 0028). The CLI reads v1/v2 manifests and writes v3 package-labelled generations. `profile list` validates active pointers; `rollback` and `remove` are dry-runs until `--yes`. Removal retains a validated inactive pointer for rollback; no object is deleted. Install trusts only one configured signed source and reauthorizes every artifact against fresh Release/Packages metadata, then checks the entire archive closure against the strict DSO policy before publishing trees or switching the profile (ADR 0029). No maintainer script or package binary is executed. Returned DSO paths are explicit caller inputs; loading them executes code with caller privileges and is not sandboxed. Profile reads validate graph membership but do not rehash referenced tree bytes; use store verification separately.
 
 Mark-and-sweep garbage collection operates under the store's exclusive advisory lock (`metadata.lock`), preventing concurrent mutation races (ADR 0030). Roots are collected by scanning active profiles (`current` symlinks) and traversing their complete `previous_id` generation chains, ensuring rollback targets are never collected. Any explicit pins or active leases also contribute roots. Inactive or removed profiles do not contribute roots, allowing their unreachable packages to be reclaimed. Shared dependency libraries (such as shared DSOs referenced by multiple profiles or generations) are preserved as long as at least one active generation references them. `dich gc` defaults to `--dry-run`, requiring explicit `--execute` to perform deletions. Tree deletions use descriptor-relative non-symlink traversal (`openat2` with `BENEATH | NO_SYMLINKS | NO_MAGICLINKS | NO_XDEV`) with depth and entry bounds and directory fsync, followed by immediate SQLite metadata transactions. Missing objects on disk are reconciled safely without panicking.
+
+## Phase 6 Security Review: Key Handling, Filesystem/TOCTOU, Paths, Privilege Model, and Container Limits
+
+A structured security audit (ADR 0034) reviews and confirms the containment invariants across the system:
+
+1. **Key Handling**:
+   - Explicit `Signed-By` keyrings in source configuration; ambient host keyrings are rejected.
+   - Keyrings opened via descriptor-relative traversal (`openat_nofollow_path`) with ownership and mode checks (root or user owned, no group/world write, no symlinks anywhere in path).
+   - InRelease / Release.gpg verification mediated by `/usr/bin/gpgv` run in an isolated subprocess with synthetic temporary keyrings under `prlimit` constraints (address space, file size, CPU time, open file descriptors).
+   - Signer fingerprints cryptographically verified against configured fingerprints; subkeys must bind to authorized primary fingerprints; revoked or expired keys fail closed; multi-signature validation requires all signers to be authorized.
+
+2. **Filesystem and TOCTOU Attacks**:
+   - Traversal uses descriptor-relative calls (`openat`, `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV`).
+   - Store and cache directories, metadata database, journal, WAL sidecars, and lock files strictly reject symlinks and hardlinks (`st_nlink > 1`).
+   - Mutations use atomic temporary file creation (`O_EXCL`, 0600) and atomic renames (`renameat2` or `rename`) with directory fsync.
+   - Staging operates within randomized private 0700 directories in `/tmp` using beneath-root constraints.
+
+3. **Paths and Archive Containment**:
+   - Package archives (.deb) are checked for directory traversal (`..`), absolute paths, NUL bytes, and control characters before staging.
+   - Tar symlinks and hardlinks are rejected during staging and tree publication.
+   - Committed store trees are content-addressed (`store/objects/trees/<sha256>`) and marked read-only (0400).
+
+4. **Privilege Model**:
+   - No background daemons, setuid binaries, or ambient capability escalations (ADR 0032).
+   - Privilege boundary is process inheritance (sudo for system mode; XDG base directories for unprivileged rootless development).
+   - Directory initialization enforces 0700 permissions with ownership checks; world-writable parent directories are rejected.
+   - Maintainer scripts and triggers are never executed by default; host system packages and `/etc` remain untouched.
+
+5. **Container Limits**:
+   - Subprocesses constrained by `prlimit` against resource exhaustion.
+   - Operations survive low `RLIMIT_NOFILE` limits without resource leakage.
+   - Preflight disk space verification (`statvfs`) prevents partial writes.
+   - Rootless `/tmp` permissions support user namespaces in Docker, Podman, and LXC containers.
+
