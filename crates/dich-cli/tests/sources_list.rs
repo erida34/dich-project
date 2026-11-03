@@ -296,3 +296,27 @@ fn cached_query_cli_outputs_authenticated_fixture_offline() {
         );
     }
 }
+
+#[test]
+fn mutation_commands_fail_closed_without_running_input() {
+    let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+    let marker = dir.path().join("should-not-exist");
+    let payload = format!("$(touch {})", marker.display());
+    for args in [
+        vec!["install", payload.as_str()],
+        vec!["remove", payload.as_str()],
+        vec!["rollback"],
+        vec!["gc", "--execute"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_dich"))
+            .arg("--json")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let body: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(body["error"]["code"], "unsupported");
+        assert!(!marker.exists());
+    }
+}

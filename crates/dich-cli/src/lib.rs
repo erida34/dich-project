@@ -129,6 +129,21 @@ impl CliError {
 }
 
 pub fn run(cli: Cli) -> Result<(), CliError> {
+    if matches!(
+        &cli.command,
+        Commands::Install { .. }
+            | Commands::Remove { .. }
+            | Commands::Rollback { .. }
+            | Commands::Gc { .. }
+    ) {
+        dich_core::admission::admit_execution(dich_core::admission::Evidence::Unexamined).map_err(
+            |_| CliError {
+                code: "unsupported",
+                message: "package execution and store mutation are not supported",
+                trace: Vec::new(),
+            },
+        )?;
+    }
     match cli.command {
         Commands::Plan {
             package,

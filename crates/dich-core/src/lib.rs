@@ -2,6 +2,7 @@
 //! Core policy models; package resolution and installation are not implemented.
 use std::{error::Error, fmt};
 
+pub mod admission;
 pub mod resolver;
 
 /// The distribution must be selected explicitly by the operator.
