@@ -12,10 +12,27 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable action commit
         with:
           toolchain: stable
           components: rustfmt, clippy
+      - name: Verify signed release tag
+        env:
+          DICH_RELEASE_SIGNING_PUBLIC_KEY: ${{ vars.DICH_RELEASE_SIGNING_PUBLIC_KEY }}
+          DICH_RELEASE_SIGNING_FINGERPRINT: ${{ vars.DICH_RELEASE_SIGNING_FINGERPRINT }}
+        run: |
+          set -eu
+          test -n "$DICH_RELEASE_SIGNING_PUBLIC_KEY" || { echo "Missing repository variable DICH_RELEASE_SIGNING_PUBLIC_KEY" >&2; exit 1; }
+          test -n "$DICH_RELEASE_SIGNING_FINGERPRINT" || { echo "Missing repository variable DICH_RELEASE_SIGNING_FINGERPRINT" >&2; exit 1; }
+          export GNUPGHOME="$RUNNER_TEMP/dich-release-gnupg"
+          install -d -m 700 "$GNUPGHOME"
+          printf '%s\n' "$DICH_RELEASE_SIGNING_PUBLIC_KEY" | gpg --batch --import
+          expected="$(printf '%s' "$DICH_RELEASE_SIGNING_FINGERPRINT" | tr '[:lower:]' '[:upper:]')"
+          actual="$(gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1 == "pub" { want=1; next } want && $1 == "fpr" { print toupper($10); want=0 }')"
+          test "$(printf '%s\n' "$actual" | sed '/^$/d' | wc -l)" -eq 1 && test "$actual" = "$expected" || { echo "Imported key fingerprint set does not exactly match DICH_RELEASE_SIGNING_FINGERPRINT" >&2; exit 1; }
+          git verify-tag "$GITHUB_REF_NAME"
       - name: Verify tag matches package version
         run: |
           tag_version="${GITHUB_REF_NAME#v}"
