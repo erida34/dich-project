@@ -942,3 +942,82 @@ fn exact_fetch_requires_signed_cached_index_and_verified_artifact() {
     );
     assert!(forged.calls.is_empty());
 }
+
+#[test]
+fn exact_fetch_verifies_signed_chain_over_real_tls_and_rejects_untrusted_ca() {
+    use crate::{IndexLimits, SnapshotJournal};
+    use rustls::{ClientConfig, RootCertStore, pki_types::CertificateDer};
+    use std::sync::Arc;
+    for trusted in [true, false] {
+        let (port, server) = tls_server();
+        let (dir, authorized) = local_authorization(&format!("https://localhost:{port}/debian"));
+        let source = authorized.release().source();
+        let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+        let policy =
+            FreshnessPolicy::new(Duration::from_secs(2 * 86400), Duration::ZERO, true).unwrap();
+        let journal = SnapshotJournal::open(dir.path()).unwrap();
+        let mut update = Fake {
+            responses: VecDeque::from([
+                response(
+                    200,
+                    None,
+                    include_bytes!("../tests/fixtures/index/InRelease"),
+                ),
+                response(
+                    200,
+                    None,
+                    include_bytes!("../tests/fixtures/index/Packages.xz"),
+                ),
+            ]),
+            calls: vec![],
+        };
+        crate::update::update_with_transport(
+            source,
+            &journal,
+            policy,
+            IndexLimits::default(),
+            &mut update,
+            || now,
+        )
+        .unwrap();
+        let mut transport = if trusted {
+            let mut roots = RootCertStore::empty();
+            roots
+                .add(CertificateDer::from(
+                    include_bytes!("../tests/fixtures/tls/ca.der").to_vec(),
+                ))
+                .unwrap();
+            let config = ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            let agent = ureq::AgentBuilder::new()
+                .https_only(true)
+                .redirects(0)
+                .try_proxy_from_env(false)
+                .tls_config(Arc::new(config))
+                .build();
+            HttpsTransport { agent }
+        } else {
+            HttpsTransport::new()
+        };
+        let result = crate::fetch_exact::fetch_exact_with_transport(
+            source,
+            &journal,
+            policy,
+            crate::FetchRequest {
+                component: "main",
+                name: "fixture",
+                version: "1.0-1",
+                max_bytes: 1024,
+            },
+            &mut transport,
+            || now,
+        );
+        if trusted {
+            assert_eq!(result.unwrap().state, crate::FetchState::Downloaded);
+        } else {
+            assert!(result.is_err());
+        }
+        server.join().unwrap();
+    }
+}
