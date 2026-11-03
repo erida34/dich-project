@@ -283,3 +283,32 @@ pub fn ensure_private_directory(path: &Path) -> Result<(), CliError> {
         trace: vec![e.to_string()],
     })
 }
+
+/// Verify that the filesystem containing `path` has sufficient free disk space.
+#[cfg(target_os = "linux")]
+pub fn check_disk_space(path: &Path, needed_bytes: u64) -> Result<(), CliError> {
+    use rustix::fs::statvfs;
+    let stat = statvfs(path).map_err(|e| CliError {
+        code: "disk_check_failed",
+        message: "could not inspect filesystem capacity",
+        trace: vec![format!("{}: {}", path.display(), e)],
+    })?;
+    let free_bytes = (stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64);
+    let minimum_required = needed_bytes.saturating_add(1024 * 1024);
+    if free_bytes < minimum_required {
+        return Err(CliError {
+            code: "disk_space_insufficient",
+            message: "insufficient disk space available in target filesystem",
+            trace: vec![format!(
+                "free: {} bytes, required: {} bytes",
+                free_bytes, minimum_required
+            )],
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn check_disk_space(_path: &Path, _needed_bytes: u64) -> Result<(), CliError> {
+    Ok(())
+}

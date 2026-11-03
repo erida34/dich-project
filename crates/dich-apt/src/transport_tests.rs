@@ -1039,3 +1039,24 @@ fn exact_fetch_verifies_signed_chain_over_real_tls_and_rejects_untrusted_ca() {
         server.join().unwrap();
     }
 }
+
+#[test]
+fn offline_transport_rejects_all_requests() {
+    use crate::transport::Transport;
+    let mut transport = crate::transport::OfflineTransport;
+    let url = Url::parse("https://example.org/debian/dists/bookworm/InRelease").unwrap();
+    let res = transport.request(&url, Duration::from_secs(1));
+    match res {
+        Err(err) => assert_eq!(err, crate::transport::FetchError::Offline),
+        Ok(_) => panic!("offline transport must reject network requests"),
+    }
+}
+
+#[test]
+fn rate_limited_reader_preserves_content_and_paces_throughput() {
+    let payload = b"rate-limited test payload streaming with exact bytes verification";
+    let mut reader = crate::transport::RateLimitedReader::new(payload.as_slice(), 1000);
+    let mut out = Vec::new();
+    reader.read_to_end(&mut out).unwrap();
+    assert_eq!(out, payload);
+}

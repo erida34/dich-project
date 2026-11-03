@@ -11,6 +11,7 @@ pub enum FetchExactError {
     Metadata,
     Artifact,
     Cache,
+    Offline,
 }
 impl fmt::Display for FetchExactError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -80,6 +81,25 @@ pub fn fetch_exact_with_proxy(
         SystemTime::now,
     )
 }
+
+/// Fetch one exact package without making any network requests.
+/// Succeeds only if the requested artifact is already present in the protected cache.
+pub fn fetch_exact_offline(
+    source: &Source,
+    journal: &SnapshotJournal,
+    policy: FreshnessPolicy,
+    request: FetchRequest<'_>,
+) -> Result<FetchResult, FetchExactError> {
+    fetch_exact_with_transport(
+        source,
+        journal,
+        policy,
+        request,
+        &mut crate::transport::OfflineTransport,
+        SystemTime::now,
+    )
+}
+
 pub(crate) fn fetch_exact_with_transport(
     source: &Source,
     journal: &SnapshotJournal,
@@ -125,7 +145,10 @@ pub(crate) fn fetch_exact_with_transport(
     }
     let verified = journal
         .fetch_with_transport(&authorized, request.max_bytes, transport, clock)
-        .map_err(|_| FetchExactError::Artifact)?;
+        .map_err(|e| match e {
+            CacheError::Fetch(crate::transport::FetchError::Offline) => FetchExactError::Offline,
+            _ => FetchExactError::Artifact,
+        })?;
     journal
         .store_artifact_with_clock(&authorized, verified, FailurePoint::None, clock)
         .map_err(|_| FetchExactError::Cache)?;

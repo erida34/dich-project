@@ -24,6 +24,12 @@ pub struct Cli {
     /// Force system mode using standard system directories (/etc/dich, /var/cache/dich, /var/lib/dich)
     #[arg(long, global = true, conflicts_with = "rootless")]
     pub system: bool,
+    /// Operate completely offline, refusing network requests and requiring cached metadata/artifacts
+    #[arg(long, global = true)]
+    pub offline: bool,
+    /// Maximum network download bandwidth in bytes per second (0 for unlimited)
+    #[arg(long, global = true, default_value_t = 0)]
+    pub max_bandwidth: u64,
     /// Explicit HTTP CONNECT proxy URL (no credentials; TLS validation remains enabled)
     #[arg(long, global = true)]
     pub https_proxy: Option<String>,
@@ -247,6 +253,12 @@ impl CliError {
             ),
             "permission_denied" => Some(
                 "Run with root privileges (e.g. sudo) for system paths, or use --rootless / user environment.",
+            ),
+            "offline_mode" => Some(
+                "Connect to the network to download packages, or verify that required packages are cached.",
+            ),
+            "disk_space_insufficient" => Some(
+                "Free up disk space on the target filesystem or run 'dich gc --execute' to clean unreachable store objects.",
             ),
             "unsatisfiable" => {
                 Some("Run 'dich search <package>' to view available package versions.")
@@ -611,6 +623,13 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Update => {
             #[cfg(target_os = "linux")]
             {
+                if cli.offline {
+                    return Err(CliError {
+                        code: "offline_mode",
+                        message: "cannot update package repositories while in offline mode",
+                        trace: Vec::new(),
+                    });
+                }
                 paths::ensure_private_directory(&paths.cache)?;
                 let proxy = cli
                     .https_proxy
@@ -768,33 +787,56 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         message: "could not open protected cache directory",
                         trace: Vec::new(),
                     })?;
+                paths::check_disk_space(&paths.cache, max_bytes)?;
                 let request = dich_apt::FetchRequest {
                     component: &component,
                     name: &package,
                     version: &exact_version,
                     max_bytes,
                 };
-                let artifact = match proxy.as_ref() {
-                    Some(proxy) => dich_apt::fetch_exact_with_proxy(
+                let artifact = if cli.offline {
+                    dich_apt::fetch_exact_offline(
                         &sources[0],
                         &journal,
                         freshness,
                         request,
-                        proxy,
-                    ),
-                    None => dich_apt::fetch_exact(&sources[0], &journal, freshness, request),
-                }
-                .map_err(|_| CliError {
-                    code: "fetch_failed",
-                    message: "could not authenticate, download and cache the requested artifact",
-                    trace: Vec::new(),
-                })?;
+                    )
+                    .map_err(|e| match e {
+                        dich_apt::FetchExactError::Offline => CliError {
+                            code: "offline_mode",
+                            message: "requested artifact is not in local cache and --offline was specified",
+                            trace: Vec::new(),
+                        },
+                        _ => CliError {
+                            code: "fetch_failed",
+                            message: "could not authenticate, download and cache the requested artifact",
+                            trace: Vec::new(),
+                        },
+                    })?
+                } else {
+                    match proxy.as_ref() {
+                        Some(proxy) => dich_apt::fetch_exact_with_proxy(
+                            &sources[0],
+                            &journal,
+                            freshness,
+                            request,
+                            proxy,
+                        ),
+                        None => dich_apt::fetch_exact(&sources[0], &journal, freshness, request),
+                    }
+                    .map_err(|_| CliError {
+                        code: "fetch_failed",
+                        message: "could not authenticate, download and cache the requested artifact",
+                        trace: Vec::new(),
+                    })?
+                };
                 let state = match artifact.state {
                     dich_apt::FetchState::Downloaded => "downloaded",
                     dich_apt::FetchState::Cached => "cached",
                 };
                 let tree = if publish_tree {
                     paths::ensure_private_directory(&paths.store_dir)?;
+                    paths::check_disk_space(&paths.store_dir, max_bytes)?;
                     let mut store = dich_store::MetadataDb::open(&paths.store_dir).map_err(|_| CliError {
                         code: "store_open_failed",
                         message: "could not open existing protected store directory; the artifact may remain cached",
@@ -1002,6 +1044,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         message: "proxy must be an unauthenticated http://host:port URL",
                         trace: Vec::new(),
                     })?;
+                paths::check_disk_space(&paths.store_dir, 10 * 1024 * 1024)?;
                 let report = dich_engine::install_dso_profile(
                     &sources[0],
                     &journal,
@@ -1012,6 +1055,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         profile: &profile,
                         store_dir: &paths.store_dir,
                         proxy: proxy.as_ref(),
+                        offline: cli.offline,
                     },
                 )
                 .map_err(map_install_error)?;
@@ -1774,6 +1818,11 @@ fn map_install_error(error: dich_engine::EngineError) -> CliError {
         | dich_engine::EngineError::Fetch => CliError {
             code: "install_input_failed",
             message: "authenticated metadata or artifact fetch failed",
+            trace: Vec::new(),
+        },
+        dich_engine::EngineError::Offline => CliError {
+            code: "offline_mode",
+            message: "required package artifact is not in local cache and --offline was specified",
             trace: Vec::new(),
         },
         dich_engine::EngineError::UnsupportedClosure(trace) => CliError {

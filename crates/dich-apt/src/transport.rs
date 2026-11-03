@@ -48,6 +48,7 @@ pub enum FetchError {
     Timeout,
     Metadata,
     NotFound,
+    Offline,
 }
 
 /// A hash-checked index and its compressed bytes for cache publication.
@@ -276,36 +277,98 @@ pub(crate) struct HttpsTransport {
 }
 impl Transport for HttpsTransport {
     fn request(&mut self, url: &Url, timeout: Duration) -> Result<NetworkResponse, FetchError> {
-        let response = match self
-            .agent
-            .get(url.as_str())
-            .set("Accept-Encoding", "identity")
-            .timeout(timeout)
-            .call()
-        {
-            Ok(response) => response,
-            Err(ureq::Error::Status(_, response)) => response,
-            Err(_) => return Err(FetchError::Transport),
-        };
-        let one_header = |name: &str| -> Result<Option<String>, FetchError> {
-            let values = response.all(name);
-            if values.len() > 1 {
-                return Err(FetchError::Status);
+        let max_retries = 3;
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let call_res = self
+                .agent
+                .get(url.as_str())
+                .set("Accept-Encoding", "identity")
+                .timeout(timeout)
+                .call();
+            let response = match call_res {
+                Ok(response) => response,
+                Err(ureq::Error::Status(status, response)) => {
+                    if matches!(status, 429 | 502 | 503 | 504) && attempt < max_retries {
+                        std::thread::sleep(Duration::from_millis(25 * (1 << attempt)));
+                        continue;
+                    }
+                    response
+                }
+                Err(_) => {
+                    if attempt < max_retries {
+                        std::thread::sleep(Duration::from_millis(25 * (1 << attempt)));
+                        continue;
+                    }
+                    return Err(FetchError::Transport);
+                }
+            };
+            let one_header = |name: &str| -> Result<Option<String>, FetchError> {
+                let values = response.all(name);
+                if values.len() > 1 {
+                    return Err(FetchError::Status);
+                }
+                Ok(values.first().map(|s| (*s).to_owned()))
+            };
+            let location = one_header("Location")?;
+            let content_encoding = one_header("Content-Encoding")?;
+            let content_length = one_header("Content-Length")?
+                .map(|s| s.parse::<u64>().map_err(|_| FetchError::Status))
+                .transpose()?;
+            return Ok(NetworkResponse {
+                status: response.status(),
+                location,
+                content_length,
+                content_encoding,
+                body: response.into_reader(),
+            });
+        }
+    }
+}
+
+/// Offline transport that strictly rejects all network connections.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct OfflineTransport;
+
+impl Transport for OfflineTransport {
+    fn request(&mut self, _url: &Url, _timeout: Duration) -> Result<NetworkResponse, FetchError> {
+        Err(FetchError::Offline)
+    }
+}
+
+/// Reader that rate-limits byte throughput to a configured maximum bytes-per-second limit.
+pub struct RateLimitedReader<R> {
+    inner: R,
+    bytes_per_sec: u64,
+    transferred: u64,
+    start: Instant,
+}
+
+impl<R: Read> RateLimitedReader<R> {
+    pub fn new(inner: R, bytes_per_sec: u64) -> Self {
+        Self {
+            inner,
+            bytes_per_sec,
+            transferred: 0,
+            start: Instant::now(),
+        }
+    }
+}
+
+impl<R: Read> Read for RateLimitedReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if n > 0 && self.bytes_per_sec > 0 {
+            self.transferred = self.transferred.saturating_add(n as u64);
+            let elapsed = self.start.elapsed();
+            let expected_duration =
+                Duration::from_secs_f64(self.transferred as f64 / self.bytes_per_sec as f64);
+            if expected_duration > elapsed {
+                std::thread::sleep(expected_duration - elapsed);
             }
-            Ok(values.first().map(|s| (*s).to_owned()))
-        };
-        let location = one_header("Location")?;
-        let content_encoding = one_header("Content-Encoding")?;
-        let content_length = one_header("Content-Length")?
-            .map(|s| s.parse::<u64>().map_err(|_| FetchError::Status))
-            .transpose()?;
-        Ok(NetworkResponse {
-            status: response.status(),
-            location,
-            content_length,
-            content_encoding,
-            body: response.into_reader(),
-        })
+        }
+        Ok(n)
     }
 }
 

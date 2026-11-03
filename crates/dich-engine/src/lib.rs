@@ -2,8 +2,9 @@
 //! Package-level orchestration. Domain validation remains in apt, deb and store crates.
 
 use dich_apt::{
-    AuthenticatedUniverse, FetchRequest, FreshnessPolicy, HttpConnectProxy, MetadataPlan,
-    PlanError, SnapshotJournal, Source, fetch_exact, fetch_exact_with_proxy,
+    AuthenticatedUniverse, FetchExactError, FetchRequest, FreshnessPolicy, HttpConnectProxy,
+    MetadataPlan, PlanError, SnapshotJournal, Source, fetch_exact, fetch_exact_offline,
+    fetch_exact_with_proxy,
 };
 use dich_core::{ArchitecturePolicy, Distribution, reference_graph::ReferenceGraph};
 use dich_deb::{ArchiveReport, CompatibilityReport, CompatibilityStatus, Limits, inspect_deb};
@@ -23,6 +24,7 @@ const MAX_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
 pub enum EngineError {
     Plan(PlanError),
     Fetch,
+    Offline,
     ArtifactLimit,
     Inspection,
     UnsupportedClosure(Vec<String>),
@@ -59,6 +61,7 @@ pub struct InstallRequest<'a> {
     pub profile: &'a str,
     pub store_dir: &'a Path,
     pub proxy: Option<&'a HttpConnectProxy>,
+    pub offline: bool,
 }
 
 pub fn plan_install(
@@ -115,11 +118,20 @@ pub fn install_dso_profile(
             version: &pin.version,
             max_bytes: MAX_ARTIFACT_BYTES,
         };
-        let artifact = match request.proxy {
-            Some(proxy) => fetch_exact_with_proxy(source, journal, freshness, fetch_request, proxy),
-            None => fetch_exact(source, journal, freshness, fetch_request),
-        }
-        .map_err(|_| EngineError::Fetch)?;
+        let artifact = if request.offline {
+            fetch_exact_offline(source, journal, freshness, fetch_request).map_err(|e| match e {
+                FetchExactError::Offline => EngineError::Offline,
+                _ => EngineError::Fetch,
+            })?
+        } else {
+            match request.proxy {
+                Some(proxy) => {
+                    fetch_exact_with_proxy(source, journal, freshness, fetch_request, proxy)
+                }
+                None => fetch_exact(source, journal, freshness, fetch_request),
+            }
+            .map_err(|_| EngineError::Fetch)?
+        };
         let mut stream = journal
             .load_artifact(artifact.authorization())
             .map_err(|_| EngineError::Fetch)?;

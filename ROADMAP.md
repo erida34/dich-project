@@ -58,7 +58,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 ## Phase 6 — hardening and operational quality (v0.7.x)
 - [x] Structured logs with redaction, stable JSON schema and exit codes, helpful errors, progress output (ADR 0031).
 - [x] Rootless mode for development; privileged operations mediated by minimal audited boundary (daemon only if justified) (ADR 0032).
-- [ ] HTTPS/proxy/timeouts/retries, bandwidth and disk limits, cancellation, offline mode, file descriptor/race abuse tests.
+- [x] HTTPS/proxy/timeouts/retries, bandwidth and disk limits, cancellation, offline mode, file descriptor/race abuse tests (ADR 0033).
 - [ ] Security review of key handling, filesystem/TOCTOU attacks, paths, symlinks, privilege model and container limits.
 - [ ] Benchmarks for cold/warm metadata sync, package dedup and GC; performance budgets.
 - [ ] Integration tests on supported Debian/Ubuntu LTS/current releases; documented support matrix and unsupported targets.
