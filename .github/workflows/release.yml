@@ -84,7 +84,7 @@ jobs:
           cd dist
           sha256sum *.deb *.spdx.json > SHA256SUMS
           sha256sum -c SHA256SUMS
-      - uses: actions/attest-build-provenance@c074443f1b5fb2a2817da07137f750b441f89f9d # v2.2.3
+      - uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
         with:
           subject-path: 'dist/*.deb'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
