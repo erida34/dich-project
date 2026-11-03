@@ -25,3 +25,5 @@ cargo test -p dich-cli --test fetch_cli live_exact_fetch_downloads_signed_artifa
 ```
 
 The test requires `downloaded`, not `cached`, and leaves the verified blob in the dedicated cache. It does not install or activate it.
+
+For an offline authenticated-cache check, provide a dedicated `DICH_REAL_CACHE`, trusted single-source `DICH_REAL_CONFIG`, original signed `DICH_REAL_RELEASE`, xz `DICH_REAL_INDEX`, `DICH_REAL_ARTIFACT`, exact `DICH_REAL_PACKAGE`, `DICH_REAL_VERSION`, `DICH_REAL_COMPONENT` and explicit `DICH_REAL_MAX_AGE`. Set `DICH_REAL_ALLOW_MISSING_VALID_UNTIL=1` only when intentionally testing such a repository. Run `cargo test -p dich-cli --test fetch_cli real_signed_cached_artifact_fetch -- --ignored --exact`. This tests a revalidated cache hit, not network downloading.
