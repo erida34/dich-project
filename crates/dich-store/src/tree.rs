@@ -189,7 +189,7 @@ pub(crate) fn publish_tree(
     let final_name = format!("{id}.tree");
     match open_dir_optional(&objects, &final_name)? {
         Some(root) => {
-            verify_tree(&root, &manifest)?;
+            verify_tree(&root, &manifest, true)?;
             sync_tree(&root, &manifest)?;
             if row.is_some() {
                 revalidate()?;
@@ -202,7 +202,7 @@ pub(crate) fn publish_tree(
             }
             let (name, root) = create_tree_stage(&staging)?;
             copy_tree(&root, stage, &manifest, failure)?;
-            verify_tree(&root, &manifest)?;
+            verify_tree(&root, &manifest, true)?;
             sync_tree(&root, &manifest)?;
             fs::fsync(&staging).map_err(|_| PublicationError::Io)?;
             fail(failure, FailurePoint::AfterFileSync)?;
@@ -339,7 +339,11 @@ fn check_dir_mode(fd: &OwnedFd) -> Result<(), PublicationError> {
     }
     Ok(())
 }
-fn verify_tree(root: &OwnedFd, manifest: &Manifest) -> Result<(), PublicationError> {
+fn verify_tree(
+    root: &OwnedFd,
+    manifest: &Manifest,
+    sync_files: bool,
+) -> Result<(), PublicationError> {
     check_dir_mode(root)?;
     let mut remaining_dirs = manifest.dirs.clone();
     let mut remaining_files = manifest.files.clone();
@@ -404,7 +408,9 @@ fn verify_tree(root: &OwnedFd, manifest: &Manifest) -> Result<(), PublicationErr
                 if count != size || hash.finalize().as_slice() != expected {
                     return Err(PublicationError::Integrity);
                 }
-                file.sync_all().map_err(|_| PublicationError::Io)?;
+                if sync_files {
+                    file.sync_all().map_err(|_| PublicationError::Io)?;
+                }
             } else {
                 return Err(PublicationError::Integrity);
             }
@@ -422,4 +428,124 @@ fn sync_tree(root: &OwnedFd, manifest: &Manifest) -> Result<(), PublicationError
         fs::fsync(open_dir(root, path)?).map_err(|_| PublicationError::Io)?;
     }
     fs::fsync(root).map_err(|_| PublicationError::Io)
+}
+
+/// Verification against locally recorded metadata, not repository freshness or compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TreeVerification {
+    pub files: usize,
+    pub directories: usize,
+    pub total_bytes: u64,
+}
+struct ManifestInput {
+    dirs: Vec<String>,
+    files: Vec<StagedFile>,
+}
+impl TreeInput for ManifestInput {
+    fn directories(&self) -> &[String] {
+        &self.dirs
+    }
+    fn files(&self) -> &[StagedFile] {
+        &self.files
+    }
+    fn open(&self, _path: &str) -> Result<Box<dyn Read>, PublicationError> {
+        Err(PublicationError::Integrity)
+    }
+}
+fn decode_manifest(bytes: &[u8]) -> Result<Manifest, PublicationError> {
+    const PREFIX: &[u8] = b"dich.tree.manifest\0v1\0";
+    if bytes.len() > 64 * 1024 * 1024 || !bytes.starts_with(PREFIX) {
+        return Err(PublicationError::Integrity);
+    }
+    let mut cursor = std::io::Cursor::new(&bytes[PREFIX.len()..]);
+    fn read_u32(cursor: &mut std::io::Cursor<&[u8]>) -> Result<u32, PublicationError> {
+        let mut b = [0; 4];
+        cursor
+            .read_exact(&mut b)
+            .map_err(|_| PublicationError::Integrity)?;
+        Ok(u32::from_be_bytes(b))
+    }
+    fn read_path(cursor: &mut std::io::Cursor<&[u8]>) -> Result<String, PublicationError> {
+        let n = read_u32(cursor)? as usize;
+        if n == 0 || n > 4096 {
+            return Err(PublicationError::Integrity);
+        }
+        let mut b = vec![0; n];
+        cursor
+            .read_exact(&mut b)
+            .map_err(|_| PublicationError::Integrity)?;
+        String::from_utf8(b).map_err(|_| PublicationError::Integrity)
+    }
+    let ndirs = read_u32(&mut cursor)? as usize;
+    if ndirs > 20_000 {
+        return Err(PublicationError::Limit);
+    }
+    let mut dirs = Vec::with_capacity(ndirs);
+    for _ in 0..ndirs {
+        dirs.push(read_path(&mut cursor)?);
+    }
+    let nfiles = read_u32(&mut cursor)? as usize;
+    if nfiles > 15_000 {
+        return Err(PublicationError::Limit);
+    }
+    let mut files = Vec::with_capacity(nfiles);
+    for _ in 0..nfiles {
+        let path = read_path(&mut cursor)?;
+        let mut size = [0; 8];
+        let mut digest = [0; 32];
+        cursor
+            .read_exact(&mut size)
+            .map_err(|_| PublicationError::Integrity)?;
+        cursor
+            .read_exact(&mut digest)
+            .map_err(|_| PublicationError::Integrity)?;
+        files.push(StagedFile {
+            path,
+            size: u64::from_be_bytes(size),
+            sha256: digest.iter().map(|b| format!("{b:02x}")).collect(),
+        });
+    }
+    if cursor.position() != (bytes.len() - PREFIX.len()) as u64 {
+        return Err(PublicationError::Integrity);
+    }
+    let result = manifest(&ManifestInput { dirs, files })?;
+    if result.encoded != bytes {
+        return Err(PublicationError::Integrity);
+    }
+    Ok(result)
+}
+impl MetadataDb {
+    /// Verify a committed private tree against local metadata. Does not reauthenticate a repository.
+    pub fn verify_tree_object(&self, id: &str) -> Result<TreeVerification, PublicationError> {
+        if id.len() != 64
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(PublicationError::UnsafePath);
+        }
+        let (context, tree, size): (Vec<u8>, Vec<u8>, i64) = self.connection.query_row(
+            "SELECT manifest, tree_manifest, total_size FROM verified_trees WHERE object_id = ?1", [id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))
+        ).map_err(|_| PublicationError::Integrity)?;
+        let actual = Sha256::digest(&context)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        if actual != id {
+            return Err(PublicationError::Integrity);
+        }
+        let manifest = decode_manifest(&tree)?;
+        if size < 0 || size as u64 != manifest.total {
+            return Err(PublicationError::Integrity);
+        }
+        let objects = crate::publication::open_private_dir(&self.root, "objects")?;
+        let root = open_dir_optional(&objects, &format!("{id}.tree"))?
+            .ok_or(PublicationError::Integrity)?;
+        verify_tree(&root, &manifest, false)?;
+        Ok(TreeVerification {
+            files: manifest.files.len(),
+            directories: manifest.dirs.len(),
+            total_bytes: manifest.total,
+        })
+    }
 }

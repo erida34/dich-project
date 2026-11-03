@@ -206,6 +206,9 @@ pub(crate) fn private_dir(root: &OwnedFd, name: &str) -> Result<OwnedFd, Publica
         Err(rustix::io::Errno::EXIST) => (),
         Err(_) => return Err(PublicationError::UnsafePath),
     }
+    open_private_dir(root, name)
+}
+pub(crate) fn open_private_dir(root: &OwnedFd, name: &str) -> Result<OwnedFd, PublicationError> {
     let fd = fs::openat2(
         root,
         name,

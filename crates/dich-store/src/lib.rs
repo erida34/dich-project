@@ -20,7 +20,7 @@ pub use publication::{PublicationError, PublicationOutcome};
 #[cfg(target_os = "linux")]
 pub use recovery::{OrphanKind, RecoveryInventory};
 #[cfg(target_os = "linux")]
-pub use tree::TreeOutcome;
+pub use tree::{TreeOutcome, TreeVerification};
 
 use sha2::{Digest, Sha256};
 use std::{error::Error, fmt};
@@ -1321,5 +1321,79 @@ mod tree_tests {
                 .join(format!("{}.tree", identity.hex()))
                 .exists()
         );
+    }
+    #[test]
+    fn tree_verification_checks_persisted_manifest_and_detects_mutation() {
+        let (root, mut db, identity, stage) = fixture();
+        let id = identity.hex();
+        assert!(db.verify_tree_object(&id).is_err());
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let report = db.verify_tree_object(&id).unwrap();
+        assert_eq!(report.files, 1);
+        assert_eq!(report.total_bytes, 5);
+        let path = root
+            .path()
+            .join("objects")
+            .join(format!("{id}.tree/usr/file"));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&path, b"wrong").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        assert!(db.verify_tree_object(&id).is_err());
+        assert!(db.verify_tree_object("../bad").is_err());
+    }
+    #[test]
+    fn tree_verification_rejects_corrupt_metadata_and_extra_files() {
+        let (root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let id = identity.hex();
+        let tree = root.path().join("objects").join(format!("{id}.tree"));
+        std::fs::write(tree.join("extra"), b"x").unwrap();
+        assert!(db.verify_tree_object(&id).is_err());
+        std::fs::remove_file(tree.join("extra")).unwrap();
+        db.connection
+            .execute(
+                "UPDATE verified_trees SET tree_manifest = ?1 WHERE object_id = ?2",
+                rusqlite::params![b"invalid".as_slice(), id],
+            )
+            .unwrap();
+        assert!(db.verify_tree_object(&identity.hex()).is_err());
+    }
+    #[test]
+    fn tree_verification_rejects_truncated_oversized_and_noncanonical_manifests() {
+        for variant in ["truncated", "trailing", "count", "path"] {
+            let (_root, mut db, identity, stage) = fixture();
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+            let id = identity.hex();
+            let mut encoded: Vec<u8> = db
+                .connection
+                .query_row(
+                    "SELECT tree_manifest FROM verified_trees WHERE object_id = ?1",
+                    [&id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            match variant {
+                "truncated" => {
+                    encoded.pop();
+                }
+                "trailing" => encoded.push(0),
+                "count" => {
+                    let offset = b"dich.tree.manifest\0v1\0".len();
+                    encoded[offset..offset + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+                }
+                "path" => {
+                    let offset = b"dich.tree.manifest\0v1\0".len() + 8;
+                    encoded[offset..offset + 3].copy_from_slice(b"../");
+                }
+                _ => unreachable!(),
+            }
+            db.connection
+                .execute(
+                    "UPDATE verified_trees SET tree_manifest = ?1 WHERE object_id = ?2",
+                    rusqlite::params![encoded, id],
+                )
+                .unwrap();
+            assert!(db.verify_tree_object(&identity.hex()).is_err(), "{variant}");
+        }
     }
 }
