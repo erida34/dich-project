@@ -56,11 +56,20 @@ impl DebianUniverse {
                         && r.profiles().is_empty()
                 })
             };
+            let simple_depends = relations
+                .depends()
+                .iter()
+                .flat_map(|g| g.alternatives())
+                .all(|r| {
+                    matches!(r.qualifier(), None | Some("any"))
+                        && r.architectures().is_empty()
+                        && r.profiles().is_empty()
+                });
             let supported = (arch == architecture || arch == "all")
                 && relations.pre_depends().is_empty()
                 && relations.system_boundary() == SystemBoundary::Ordinary
                 && !(arch == "all" && relations.multi_arch() == MultiArch::Same)
-                && simple(relations.depends())
+                && simple_depends
                 && simple(relations.conflicts())
                 && simple(relations.breaks())
                 && simple(relations.provides());
@@ -127,8 +136,8 @@ fn compare(version: &DebianVersion, relation: &DependencyRelation) -> bool {
         })
 }
 fn matches(candidate: &Candidate, relation: &DependencyRelation) -> bool {
-    if candidate.name == relation.name() && compare(&candidate.version, relation) {
-        return true;
+    if candidate.name == relation.name() {
+        return compare(&candidate.version, relation);
     }
     candidate
         .relations
@@ -146,6 +155,19 @@ fn matches(candidate: &Candidate, relation: &DependencyRelation) -> bool {
             }
         })
 }
+fn dependency_matches(candidate: &Candidate, relation: &DependencyRelation) -> bool {
+    if !matches(candidate, relation) {
+        return false;
+    }
+    match relation.qualifier() {
+        None => true,
+        Some("any") => {
+            candidate.name == relation.name()
+                && candidate.relations.multi_arch() == MultiArch::Allowed
+        }
+        Some(_) => false,
+    }
+}
 impl Provider for DebianUniverse {
     type Candidate = usize;
     type Requirement = Requirement;
@@ -156,7 +178,10 @@ impl Provider for DebianUniverse {
             let mut choices = Vec::new();
             for id in self.names.get(relation.name()).into_iter().flatten() {
                 let candidate = &self.candidates[*id];
-                if candidate.supported && matches(candidate, relation) && !seen.contains(id) {
+                if candidate.supported
+                    && dependency_matches(candidate, relation)
+                    && !seen.contains(id)
+                {
                     choices.push(*id);
                     if choices.len() + result.len() > 1024 {
                         result.extend(choices);
@@ -187,7 +212,10 @@ impl Provider for DebianUniverse {
                 .flatten()
                 .any(|id| {
                     let candidate = &self.candidates[*id];
-                    !candidate.supported && matches(candidate, relation)
+                    matches(candidate, relation)
+                        && (!candidate.supported
+                            || (relation.qualifier() == Some("any")
+                                && candidate.name != relation.name()))
                 })
         })
     }
@@ -212,6 +240,10 @@ impl Provider for DebianUniverse {
             .iter()
             .map(|relation| {
                 let mut result = relation.name().to_owned();
+                if let Some(qualifier) = relation.qualifier() {
+                    result.push(':');
+                    result.push_str(qualifier);
+                }
                 if let Some(version) = relation.version() {
                     let operator = match version.operator() {
                         Comparison::Less => "<<",

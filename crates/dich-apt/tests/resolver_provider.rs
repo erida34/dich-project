@@ -154,3 +154,67 @@ fn architecture_all_with_multiarch_same_is_conservatively_unsupported() {
         Err(dich_core::resolver::ResolveError::Unsupported { .. })
     ));
 }
+
+#[test]
+fn any_qualifier_requires_multiarch_allowed_on_native_candidate() {
+    use dich_core::resolver::ResolveError;
+    for (flag, succeeds) in [
+        ("allowed", true),
+        ("same", false),
+        ("foreign", false),
+        ("no", false),
+    ] {
+        let fixture = format!(
+            "Package: root\nVersion: 1\nArchitecture: amd64\nDepends: library:any (>= 2)\n\nPackage: library\nVersion: 2\nArchitecture: amd64\nMulti-Arch: {flag}\n"
+        );
+        let universe = DebianUniverse::from_stanzas(
+            &parse_control_stanzas(fixture.as_bytes()).unwrap(),
+            "amd64",
+        )
+        .unwrap();
+        let result = resolve(
+            &universe,
+            vec![universe.require("root").unwrap()],
+            SearchLimits::default(),
+        );
+        if succeeds {
+            assert!(result.is_ok(), "{flag}: {result:?}");
+        } else {
+            assert!(
+                matches!(result, Err(ResolveError::Unsatisfiable { .. })),
+                "{flag}: {result:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn any_qualified_virtual_provides_remain_unsupported() {
+    use dich_core::resolver::ResolveError;
+    let fixture = b"Package: root\nVersion: 1\nArchitecture: amd64\nDepends: virtual:any\n\nPackage: provider\nVersion: 1\nArchitecture: amd64\nMulti-Arch: allowed\nProvides: virtual\n";
+    let universe =
+        DebianUniverse::from_stanzas(&parse_control_stanzas(fixture).unwrap(), "amd64").unwrap();
+    assert!(matches!(
+        resolve(
+            &universe,
+            vec![universe.require("root").unwrap()],
+            SearchLimits::default()
+        ),
+        Err(ResolveError::Unsupported { .. })
+    ));
+}
+
+#[test]
+fn any_qualified_direct_package_uses_real_version_not_its_self_provide() {
+    let fixture = b"Package: root\nVersion: 1\nArchitecture: amd64\nDepends: library:any (>= 2)\n\nPackage: library\nVersion: 1\nArchitecture: amd64\nMulti-Arch: allowed\nProvides: library (= 3)\n";
+    let universe =
+        DebianUniverse::from_stanzas(&parse_control_stanzas(fixture).unwrap(), "amd64").unwrap();
+    assert!(
+        resolve(
+            &universe,
+            vec![universe.require("root").unwrap()],
+            SearchLimits::default()
+        )
+        .is_err()
+    );
+}
