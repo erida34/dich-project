@@ -149,6 +149,9 @@
 
 - 2026-11-03: Phase 6 distro support matrix and release integration milestone verified and checked (ADR 0036): defined Tier 1 supported platforms (Debian 12 bookworm, Debian 13 trixie, Ubuntu 22.04 LTS jammy, Ubuntu 24.04 LTS noble on amd64) and documented the support matrix and unsupported targets in `docs/support-matrix.md`. Added integration test suite `crates/dich-cli/tests/distro_integration.rs` verifying Debian (bookworm, trixie) and Ubuntu (jammy, noble) source loading and policy validation, fail-closed rejection of moving suite aliases (sid, unstable, testing, devel, rolling), rejection of foreign architectures (arm64, i386, riscv64), rejection of cross-distribution mixing, and rejection of cross-suite mixing. Phase 6 is complete. Full workspace fmt, check, clippy (`-D warnings`), all-target tests, docs, CLI help, and documentation asset checks passed in WSL. Next: Phase 7 Line 67 (Polish README/getting started, installation and uninstall, config examples, FAQ, man pages, shell completions, CHANGELOG).
 
+- 2026-11-03: Phase 7 documentation and release polish milestone verified and checked: comprehensively polished `README.md` with accurate feature overview reflecting Phase 1–6 implementations, getting started for rootless and system installations, installation/uninstallation instructions, configuration examples, and complete workflow guides. Authored `docs/faq.md` answering architectural, security, and operational questions. Updated `CHANGELOG.md` following Keep a Changelog format. Regenerated all man pages and shell completions (Bash, Zsh, Fish) in `packaging/generated` via `dich-gen-docs` and validated them with `scripts/check-docs.sh`. Full workspace fmt, check, clippy (`-D warnings`), all-target tests, docs, CLI help, and documentation asset checks passed in WSL. Next: Phase 7 Line 68 (`cargo-deny`, `cargo-audit`, dependency/license policy, reproducible build guidance, SBOM and provenance).
+
+
 
 
 

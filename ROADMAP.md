@@ -64,7 +64,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Integration tests on supported Debian/Ubuntu LTS/current releases; documented support matrix and unsupported targets (ADR 0036).
 
 ## Phase 7 — public release (v1.0.0 only after criteria)
-- [ ] Polish README/getting started, installation and uninstall, config examples, FAQ, man pages, shell completions, CHANGELOG.
+- [x] Polish README/getting started, installation and uninstall, config examples, FAQ, man pages, shell completions, CHANGELOG.
 - [ ] `cargo-deny`, `cargo-audit`, dependency/license policy, reproducible build guidance, SBOM and provenance.
 - [ ] GitHub Actions: format, clippy, tests, docs, real `.deb` install/upgrade/remove in clean target images.
 - [ ] Release artifacts for amd64; arm64 only after verified, SHA256SUMS, release notes and verified GitHub Release assets.

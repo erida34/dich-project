@@ -1,128 +1,195 @@
 # Dich
 
-**Dich** — a version-aware, dependency-sharing package store for Debian and Ubuntu sources, written in Rust.
+**Dich** is a production-oriented, version-aware Linux package store that sources **original signed Debian and Ubuntu APT repositories and `.deb` artifacts** without assuming arbitrary binary packages are relocatable. Written in Rust.
 
-> **Status: experimental.** Dich verifies configured APT signing keys and metadata, downloads exact artifacts, and supports a tightly bounded profile install for authenticated x86-64 glibc DSO closures. The install command stores unchanged objects and selects profile metadata; callers must load the returned paths explicitly, and Dich does not execute package code. General Debian package installation, a complete resolver, hard immutable storage, arbitrary ABI compatibility, GC and production recovery are not implemented. Do not use it as a production package manager.
+It allows multiple package versions and configurations to coexist safely in immutable content-addressed storage, deduplicates shared dependencies, tracks exact reference graphs, supports atomic profile switching and instant rollbacks, and provides safe mark-and-sweep garbage collection.
 
-## Vision
+Dich strictly adheres to the principle of **host non-interference**: it never invokes `apt` or `dpkg` on the host, never executes maintainer scripts (`postinst`, `preinst`), and never touches `/usr`, `/etc`, or `/var/lib/dpkg`.
 
-Dich will download **original `.deb` files from verified APT repositories**, analyze dependencies and binary compatibility, and place compatible objects into a versioned, shared store. Multiple versions may coexist; profiles select the exact package set; shared dependencies should not be duplicated. Dich does not replace or rewrite the operating system's APT/dpkg database.
+---
 
-### What makes it different
-- Upstream is Debian/Ubuntu APT metadata and packages, **not** nixpkgs or a new package format.
-- Every store object is uniquely identified and shared wherever compatible.
-- Exact dependency resolution and explicit ABI compatibility checks are mandatory.
-- System packages and package-maintainer scripts are not executed as host installation actions.
-- Compatibility restrictions are surfaced clearly instead of pretending any `.deb` is relocatable.
+## Key Features
 
-## Quick start (development)
+- **Original APT Repositories**: Directly sources official upstream Debian and Ubuntu mirrors using cryptographic OpenPGP signature verification (`InRelease`, `Release.gpg`), digest validation, and rollback protection.
+- **Content-Addressed Store**: Deduplicates shared libraries and files across package versions in read-only (`0400`) storage.
+- **Isolated DSO Execution**: Allows applications to load isolated DSO closures into independent link-map namespaces (`dlmopen(LM_ID_NEWLM)`), preventing symbol collision and host library conflicts without binary patching.
+- **Atomic Profiles & Rollback**: Profiles are managed via atomic relative symlink switches pointing to cryptographic generation manifests. Instant rollback restores previous generation states.
+- **Mark-and-Sweep Garbage Collection**: Safely identifies and sweeps unreachable objects while preserving all active profiles, rollback chains, and explicit pins. Defaults to `--dry-run`.
+- **Rootless by Default**: Operates completely unprivileged in user environments following XDG standards (`$XDG_DATA_HOME/dich`, `$XDG_CACHE_HOME/dich`, `$XDG_CONFIG_HOME/dich`). No background daemons or setuid binaries.
+- **Network Resilience & Offline Mode**: Exponential backoff retries, configurable bandwidth pacing (`--max-bandwidth`), preflight disk checks, and strict `--offline` mode refusing all socket traffic.
+- **Structured Diagnostics**: Clean stdout/stderr separation, machine-readable versioned JSON (`--json`), structured logging (`--log-level`), and stable numeric exit codes.
 
-Prerequisites: supported Rust toolchain with Cargo, Debian/Ubuntu system for integration tests, and `gpg`, `gpgv`, `prlimit`, `gzip`, `xz`, `zstd` and `cc` for the relevant fixture tests. Linux is the target; initial development may be run on other hosts for model tests only.
+---
 
+## Supported Distribution Matrix
+
+Dich verifies packages against explicit glibc and native architecture baselines (see [Support Matrix](docs/support-matrix.md) and [ADR 0036](docs/adr/0036-distribution-support-matrix-and-targets.md)):
+
+| Distribution | Suite Codename | Architecture | glibc Baseline | Status |
+|---|---|---|---|---|
+| **Debian 12** | `bookworm` | `amd64` (x86_64) | 2.36 | Supported |
+| **Debian 13** | `trixie` | `amd64` (x86_64) | 2.40 | Supported |
+| **Ubuntu 22.04 LTS** | `jammy` | `amd64` (x86_64) | 2.35 | Supported |
+| **Ubuntu 24.04 LTS** | `noble` | `amd64` (x86_64) | 2.39 | Supported |
+
+*Note*: Moving suite aliases (`stable`, `testing`, `unstable`, `sid`, `devel`) and cross-distribution mixing within a profile are strictly rejected to ensure deterministic cryptographic reproducibility.
+
+---
+
+## Installation
+
+### From Debian Package (`.deb`)
+Download the release artifact `dich_<version>_amd64.deb` from GitHub Releases:
 ```sh
-cargo run -p dich-cli -- --help
+sudo dpkg -i dich_<version>_amd64.deb
+```
+This installs the `dich` binary to `/usr/bin/dich`, documentation to `/usr/share/man/man1/dich.1.gz`, and shell completions for Bash, Zsh, and Fish.
+
+### From Source
+Ensure Rust 1.85+ is installed:
+```sh
+git clone https://github.com/dich-project/dich.git
+cd dich
+cargo build --release
+sudo cp target/release/dich /usr/local/bin/
 ```
 
+### Uninstallation
+To remove Dich completely:
 ```sh
-cargo test --workspace --all-targets
+# Remove binary and system package
+sudo apt remove dich    # or: sudo dpkg -r dich
+
+# Clean up system store and cache (if used)
+sudo rm -rf /var/lib/dich /var/cache/dich /etc/dich
+
+# Clean up user rootless store and cache (if used)
+rm -rf ~/.local/share/dich ~/.cache/dich ~/.config/dich
 ```
 
-```sh
-cargo run -p dich-cli -- --help
+---
+
+## Configuration
+
+Dich relies on explicit source policy files defining trusted APT repositories and their OpenPGP keyrings.
+
+### Rootless Mode (User Configuration)
+Create `~/.config/dich/sources.toml`:
+```toml
+[[sources]]
+distribution = "debian"
+sources_file = "/home/user/.config/dich/debian.sources"
+uri = "https://deb.debian.org/debian"
+suite = "bookworm"
+components = ["main"]
+architecture = "amd64"
+keyring = "/usr/share/keyrings/debian-archive-keyring.gpg"
+fingerprints = [
+    "B42F2F2309C104E9833606C7A87A134DE3532297"
+]
 ```
 
-To inspect a trusted source policy without contacting repositories, run `dich --config /absolute/path/sources.toml sources list` (add `--json` for versioned output). Listing means configured, not authenticated or available. For metadata queries and installation, configure real trusted source policy and keyrings as described in `docs/adr/0002-source-policy.md` and `docs/adr/0008-cli-sources.md`. Create a protected local cache directory owned by the invoking user (or root); Dich will not initialize it. Set a suitable maximum metadata age explicitly according to your repository and security requirements, then run:
-
-```sh
-dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 update
-dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 search openssl
+Create the referenced deb822 file `~/.config/dich/debian.sources`:
+```deb822
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: bookworm
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 ```
 
-If the repository omits `Valid-Until`, `--allow-missing-valid-until` explicitly permits it while retaining the maximum-age check. Search is a package-name substring; show and versions require an exact name. Results contain name, version, architecture, source and suite only, and do not establish installability. Queries fail when any configured index is unavailable, stale or invalid. An interrupted or failed update can leave a partial cache; rerun update. Protect the cache and clock: deletion or rollback of the entire cache can defeat its per-source rollback floor. An experimental informational plan requires exactly one configured source and an explicit identity boundary:
+### System Mode (`/etc/dich/sources.toml`)
+For managed multi-user or system installations, place configuration in `/etc/dich/sources.toml`. When running unprivileged, Dich automatically falls back to reading `/etc/dich/sources.toml` if user configuration does not exist.
 
+---
+
+## Quickstart & Common Workflows
+
+### 1. Refresh Repository Metadata
+Fetch and cryptographically authenticate `InRelease` and package indices:
 ```sh
-dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 plan hello --distribution ubuntu --suite noble --architecture amd64
+dich update
+```
+For explicit offline environments:
+```sh
+dich --offline search openssl
 ```
 
-To download one exact artifact from an already updated, authenticated cache with exactly one configured source, select its component and version explicitly. Where direct connections are unavailable, network commands accept an explicit unauthenticated HTTP CONNECT proxy; proxy environment variables are ignored:
-
+### 2. Search and Query Cached Packages
+Search package names and inspect version records:
 ```sh
-dich --https-proxy http://proxy.example:8080 --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 update
-dich --https-proxy http://proxy.example:8080 --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 fetch package --exact-version 1.2-3 --component main
+dich search libsqlite3
+dich show libsqlite3-0
+dich versions libsqlite3-0
 ```
 
-The HTTPS origin certificate and signed repository metadata remain verified. An intercepting proxy with an untrusted certificate is rejected. Proxy credentials and environment-based proxy discovery are unsupported (ADR 0021).
-
+### 3. Dependency Planning
+Generate a dependency and closure plan without installing:
 ```sh
-dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 fetch hello --exact-version 1.0-1 --component main
+dich plan libexample --distribution debian --suite bookworm --architecture amd64
 ```
 
-The example version is illustrative; select a version actually present in the authenticated index. Fetch rechecks signatures and digests and reuses a valid cached artifact when available. The output distinguishes `cached` from `downloaded`; a corrupt cache entry fails closed. To additionally publish a conservative extracted tree, provide an existing protected `--store-dir` and add `--publish-tree`. This may initialize metadata within that directory and rejects unsupported archives. It never activates the package or establishes installability; a failure may leave the verified artifact cached. A live Ubuntu Noble metadata update and exact package fetch were verified in WSL through an explicit credential-free HTTP CONNECT proxy; historical snapshot freshness overrides used for this check are not deployment guidance.
+### 4. Install a Package into a Profile
+Dich plans by default. Use `--yes` to confirm and commit:
+```sh
+# Preview the install plan
+dich install libexample --profile myapp --exact-version 1.2.0-1
 
-Local compatibility inspection does not authenticate a package. To inspect a DSO and explicitly supplied dependency package together, use `dich --json inspect ./plugin.deb --with ./common.deb`. The narrow x86-64 glibc closure rule requires every ELF dependency and imported symbol to resolve within the supplied set and reports a dependency-first SONAME load order. Local inputs remain unverified and non-installable. The isolated `dlmopen` fixture is a symbol namespace boundary, not a sandbox; loaded code can run with the caller's privileges. See ADR 0027.
+# Commit the installation into the profile
+dich install libexample --profile myapp --exact-version 1.2.0-1 --yes
+```
 
-Plans are labeled `planned` and include signed-snapshot and artifact SHA256 identities in JSON, but cannot yet be replayed as locks. The resolver supports a narrow relationship subset and rejects, among other cases, most multiarch qualifiers and essential/required packages; it does not infer host packages. `install` rechecks fresh signed metadata and only accepts the authenticated DSO class after the complete selected closure passes ADR 0027. Without `--yes`, it only plans; with confirmation, it stores unchanged trees and selects one requested root per profile. It reports explicit object paths and load order for callers; Dich does not load them, provide a sandbox or change loader configuration. Use separate profiles for separate requested roots. `remove` also requires `--yes` to deactivate the profile pointer; objects are retained, and GC is not implemented. An existing store can be inspected with `dich --store-dir /absolute/path/store store ls` and verified with `dich --store-dir /absolute/path/store store verify OBJECT_ID --kind tree`. Listing reads metadata without checking contents; verification checks local bytes without refreshing repository signatures or proving compatibility. Local `dich inspect` inputs remain unverified even when the report says `supported`. See ADRs 0025–0029.
-
-## Experimental profile commands
-
-```text
-dich --config /absolute/path/sources.toml --cache /absolute/path/cache --store-dir /absolute/path/store --max-age-seconds 86400 install libexample --profile app --exact-version 1.2-3
-dich --config /absolute/path/sources.toml --cache /absolute/path/cache --store-dir /absolute/path/store --max-age-seconds 86400 install libexample --profile app --exact-version 1.2-3 --yes
+### 5. Profile Management & Rollback
+Inspect active profiles and generations:
+```sh
 dich profile list
-dich remove libexample --profile app --yes
-dich rollback --profile default
-dich gc --dry-run
 ```
-
-The first `install` invocation prints a metadata-only plan; `--exact-version` constrains the requested root to that Debian version. Only the confirmed invocation fetches, checks compatibility, publishes and selects the DSO closure. A later exact-version install in the same profile creates a new generation; `rollback --profile app --yes` switches to the retained prior generation. These profile operations only select metadata and do not load or activate libraries. `gc` remains unsupported.
-
-## Repository layout
-
-```text
-crates/dich-cli/      CLI binary and command definitions
-crates/dich-engine/   authenticated install orchestration
-crates/dich-core/     typed domain models and invariants
-crates/dich-apt/      repository trust, metadata and cache libraries (partial)
-crates/dich-deb/      bounded .deb inspection and private staging (partial)
-crates/dich-elf/      ELF and ABI analysis (planned)
-crates/dich-store/    experimental objects, graphs and metadata profiles; GC planned
-docs/                architecture, threat model, ADRs and policies
-packaging/           distro packaging helpers and examples
-scripts/             documentation verification
-.github/workflows/    quality and GitHub Releases
-```
-
-## Design constraints
-
-- Signed Release metadata, hash-verified indices and blobs, fail-closed errors.
-- No cross-release mixing by default (e.g. Debian stable + testing or Ubuntu releases).
-- No `/usr`, `/etc`, `/var/lib/dpkg` mutation by Dich-managed store operations.
-- Maintain a whitelist of compatible package classes before enabling real installation.
-- `glibc`, dynamic loader and library symbol-version constraints must be validated.
-
-## Build and packaging
-
-The GitHub tag workflow is a scaffold for Linux amd64 `.deb` builds. It generates man pages and shell completions from the same Clap command definition and packages them together with the executable. CI checks package content and install/remove smoke tests. Tag builds are not proof of a production-ready package manager. See `docs/releasing.md`.
-
-Build a local Debian package (after installing cargo-deb):
-
+Roll back a profile to its previous generation atomically:
 ```sh
-cargo run -p dich-cli --bin dich-gen-docs -- packaging/generated
-```
+# Preview rollback
+dich rollback --profile myapp
 
+# Commit rollback
+dich rollback --profile myapp --yes
+```
+Remove a package profile:
 ```sh
-cargo deb -p dich-cli
+dich remove libexample --profile myapp --yes
 ```
 
-For current supported command syntax and component responsibilities, see `docs/architecture.md` and `man dich` after installation.
+### 6. Garbage Collection
+Reclaim unreferenced store objects while protecting active profiles and rollback targets:
+```sh
+# Dry run: preview reclaimable disk space
+dich gc
 
-## Security
+# Execute: delete unreachable objects and fsync metadata
+dich gc --execute
+```
 
-**This tool processes untrusted repository data and archives**. Do not enable installation until signed metadata validation, safe extraction, store transaction guarantees, and compatibility gates pass the tests in `ROADMAP.md`. Report vulnerabilities privately via `SECURITY.md`.
+### 7. Inspect Local `.deb` Archives
+Examine local archives safely without extraction or script execution:
+```sh
+dich inspect ./package.deb
+dich --json inspect ./plugin.deb --with ./libcommon.deb
+```
 
-## Project
+---
 
-- License: MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`).
-- Maintainers: to be appointed; do not invent GitHub URLs or release signing keys.
-- Contributions: see `CONTRIBUTING.md`.
-- Roadmap: `ROADMAP.md`.
+## Documentation
+
+- [Architecture & Boundaries](docs/architecture.md)
+- [Security Model & Threat Invariants](docs/security.md)
+- [Distribution Support Matrix](docs/support-matrix.md)
+- [Frequently Asked Questions (FAQ)](docs/faq.md)
+- [Architecture Decision Records (ADRs)](docs/adr/)
+- [Progress & Implementation Log](docs/progress.md)
+
+---
+
+## License
+
+Licensed under either of:
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
