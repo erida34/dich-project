@@ -3,18 +3,27 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+pub mod paths;
+pub use paths::ResolvedPaths;
+
 #[derive(Debug, Parser)]
 #[command(name = "dich", about = "Versioned package store using Debian/Ubuntu sources (experimental)", version, long_about = None)]
 pub struct Cli {
-    /// Path to trusted source policy
-    #[arg(long, global = true, default_value = "/etc/dich/sources.toml")]
-    pub config: PathBuf,
-    /// Existing protected cache directory
-    #[arg(long, global = true, default_value = "/var/cache/dich")]
-    pub cache: PathBuf,
-    /// Existing protected store directory (never created by read commands)
-    #[arg(long, global = true, default_value = "/var/lib/dich")]
-    pub store_dir: PathBuf,
+    /// Path to trusted source policy [default: /etc/dich/sources.toml or $XDG_CONFIG_HOME/dich/sources.toml]
+    #[arg(long, global = true)]
+    pub config: Option<PathBuf>,
+    /// Protected cache directory [default: /var/cache/dich or $XDG_CACHE_HOME/dich]
+    #[arg(long, global = true)]
+    pub cache: Option<PathBuf>,
+    /// Protected store directory [default: /var/lib/dich or $XDG_DATA_HOME/dich]
+    #[arg(long, global = true)]
+    pub store_dir: Option<PathBuf>,
+    /// Force rootless (user) mode using XDG base directories
+    #[arg(long, global = true, conflicts_with = "system")]
+    pub rootless: bool,
+    /// Force system mode using standard system directories (/etc/dich, /var/cache/dich, /var/lib/dich)
+    #[arg(long, global = true, conflicts_with = "rootless")]
+    pub system: bool,
     /// Explicit HTTP CONNECT proxy URL (no credentials; TLS validation remains enabled)
     #[arg(long, global = true)]
     pub https_proxy: Option<String>,
@@ -227,14 +236,17 @@ impl CliError {
             "unsupported" | "compatibility_rejected" => {
                 Some("Run 'dich inspect <deb>' to examine package compatibility constraints.")
             }
-            "store_open_failed" => {
-                Some("Verify the store directory path with --store-dir or check file permissions.")
-            }
-            "source_load_failed" => Some(
-                "Verify the source policy file with --config (default: /etc/dich/sources.toml).",
+            "store_open_failed" => Some(
+                "Verify the store directory path with --store-dir (default: /var/lib/dich or $XDG_DATA_HOME/dich) or check permissions.",
             ),
-            "cache_unavailable" => Some(
-                "Verify the cache directory with --cache (default: /var/cache/dich) or run 'dich update'.",
+            "source_load_failed" => Some(
+                "Verify the source policy file with --config (default: /etc/dich/sources.toml or $XDG_CONFIG_HOME/dich/sources.toml).",
+            ),
+            "cache_unavailable" | "cache_open_failed" => Some(
+                "Verify the cache directory with --cache (default: /var/cache/dich or $XDG_CACHE_HOME/dich) or run 'dich update'.",
+            ),
+            "permission_denied" => Some(
+                "Run with root privileges (e.g. sudo) for system paths, or use --rootless / user environment.",
             ),
             "unsatisfiable" => {
                 Some("Run 'dich search <package>' to view available package versions.")
@@ -359,6 +371,21 @@ pub fn report_progress(
 
 pub fn run(cli: Cli) -> Result<(), CliError> {
     let log_level = cli.effective_log_level();
+    let paths = ResolvedPaths::resolve(&cli);
+    if paths.is_rootless {
+        log_event(
+            log_level,
+            cli.json,
+            LogLevel::Debug,
+            "dich::rootless",
+            "operating in rootless mode using XDG base directories",
+            &[
+                ("store_dir", &paths.store_dir.display().to_string()),
+                ("cache", &paths.cache.display().to_string()),
+                ("config", &paths.config.display().to_string()),
+            ],
+        );
+    }
     match cli.command {
         Commands::Plan {
             package,
@@ -402,7 +429,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                             trace: Vec::new(),
                         })?;
                 let sources =
-                    dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
+                    dich_apt::load_configured_sources(&paths.config).map_err(|_| CliError {
                         code: "source_load_failed",
                         message: "could not load trusted source configuration",
                         trace: Vec::new(),
@@ -415,7 +442,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     });
                 }
                 let journal =
-                    dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
+                    dich_apt::SnapshotJournal::open(&paths.cache).map_err(|_| CliError {
                         code: "cache_open_failed",
                         message: "could not open protected cache directory",
                         trace: Vec::new(),
@@ -513,16 +540,17 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     trace: Vec::new(),
                 })?;
                 let sources =
-                    dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
+                    dich_apt::load_configured_sources(&paths.config).map_err(|_| CliError {
                         code: "source_load_failed",
                         message: "could not load trusted source configuration",
                         trace: Vec::new(),
                     })?;
-                let cache = dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
-                    code: "cache_open_failed",
-                    message: "could not open protected cache directory",
-                    trace: Vec::new(),
-                })?;
+                let cache =
+                    dich_apt::SnapshotJournal::open(&paths.cache).map_err(|_| CliError {
+                        code: "cache_open_failed",
+                        message: "could not open protected cache directory",
+                        trace: Vec::new(),
+                    })?;
                 let query = match &command {
                     Commands::Search { query } => dich_apt::Query::Search(query),
                     Commands::Show { package } => dich_apt::Query::Show(package),
@@ -583,6 +611,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Update => {
             #[cfg(target_os = "linux")]
             {
+                paths::ensure_private_directory(&paths.cache)?;
                 let proxy = cli
                     .https_proxy
                     .as_deref()
@@ -609,16 +638,17 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     trace: Vec::new(),
                 })?;
                 let sources =
-                    dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
+                    dich_apt::load_configured_sources(&paths.config).map_err(|_| CliError {
                         code: "source_load_failed",
                         message: "could not load trusted source configuration",
                         trace: Vec::new(),
                     })?;
-                let cache = dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
-                    code: "cache_open_failed",
-                    message: "could not open protected cache directory",
-                    trace: Vec::new(),
-                })?;
+                let cache =
+                    dich_apt::SnapshotJournal::open(&paths.cache).map_err(|_| CliError {
+                        code: "cache_open_failed",
+                        message: "could not open protected cache directory",
+                        trace: Vec::new(),
+                    })?;
                 report_progress(
                     cli.progress,
                     cli.json,
@@ -693,6 +723,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             #[cfg(target_os = "linux")]
             {
+                paths::ensure_private_directory(&paths.cache)?;
                 let proxy = cli
                     .https_proxy
                     .as_deref()
@@ -719,7 +750,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     trace: Vec::new(),
                 })?;
                 let sources =
-                    dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
+                    dich_apt::load_configured_sources(&paths.config).map_err(|_| CliError {
                         code: "source_load_failed",
                         message: "could not load trusted source configuration",
                         trace: Vec::new(),
@@ -732,7 +763,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     });
                 }
                 let journal =
-                    dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
+                    dich_apt::SnapshotJournal::open(&paths.cache).map_err(|_| CliError {
                         code: "cache_open_failed",
                         message: "could not open protected cache directory",
                         trace: Vec::new(),
@@ -763,7 +794,8 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     dich_apt::FetchState::Cached => "cached",
                 };
                 let tree = if publish_tree {
-                    let mut store = dich_store::MetadataDb::open(&cli.store_dir).map_err(|_| CliError {
+                    paths::ensure_private_directory(&paths.store_dir)?;
+                    let mut store = dich_store::MetadataDb::open(&paths.store_dir).map_err(|_| CliError {
                         code: "store_open_failed",
                         message: "could not open existing protected store directory; the artifact may remain cached",
                         trace: Vec::new(),
@@ -850,6 +882,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             #[cfg(target_os = "linux")]
             {
+                if yes {
+                    paths::ensure_private_directory(&paths.cache)?;
+                    paths::ensure_private_directory(&paths.store_dir)?;
+                }
                 let age = cli.max_age_seconds.ok_or(CliError {
                     code: "freshness_policy_required",
                     message: "specify --max-age-seconds explicitly",
@@ -862,7 +898,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     trace: Vec::new(),
                 })?;
                 let sources =
-                    dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
+                    dich_apt::load_configured_sources(&paths.config).map_err(|_| CliError {
                         code: "source_load_failed",
                         message: "could not load trusted source configuration",
                         trace: Vec::new(),
@@ -875,7 +911,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     });
                 }
                 let journal =
-                    dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
+                    dich_apt::SnapshotJournal::open(&paths.cache).map_err(|_| CliError {
                         code: "cache_open_failed",
                         message: "could not open protected cache directory",
                         trace: Vec::new(),
@@ -974,7 +1010,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         package: &package,
                         exact_version: exact_version.as_deref(),
                         profile: &profile,
-                        store_dir: &cli.store_dir,
+                        store_dir: &paths.store_dir,
                         proxy: proxy.as_ref(),
                     },
                 )
@@ -1131,7 +1167,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             #[cfg(target_os = "linux")]
             {
-                let db = dich_store::MetadataDb::open_existing(&cli.store_dir).map_err(|_| {
+                let db = dich_store::MetadataDb::open_existing(&paths.store_dir).map_err(|_| {
                     CliError {
                         code: "store_open_failed",
                         message: "could not open existing protected store with current schema",
@@ -1187,8 +1223,11 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Rollback { profile, yes } => {
             #[cfg(target_os = "linux")]
             {
+                if yes {
+                    paths::ensure_private_directory(&paths.store_dir)?;
+                }
                 let mut db =
-                    dich_store::MetadataDb::open_existing(&cli.store_dir).map_err(|_| {
+                    dich_store::MetadataDb::open_existing(&paths.store_dir).map_err(|_| {
                         CliError {
                             code: "store_open_failed",
                             message: "could not open existing protected store with current schema",
@@ -1293,8 +1332,11 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             #[cfg(target_os = "linux")]
             {
+                if yes {
+                    paths::ensure_private_directory(&paths.store_dir)?;
+                }
                 let mut db =
-                    dich_store::MetadataDb::open_existing(&cli.store_dir).map_err(|_| {
+                    dich_store::MetadataDb::open_existing(&paths.store_dir).map_err(|_| {
                         CliError {
                             code: "store_open_failed",
                             message: "could not open existing protected store with current schema",
@@ -1397,7 +1439,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Store { command } => {
             #[cfg(target_os = "linux")]
             {
-                let db = dich_store::MetadataDb::open_existing(&cli.store_dir).map_err(|_| {
+                let db = dich_store::MetadataDb::open_existing(&paths.store_dir).map_err(|_| {
                     CliError {
                         code: "store_open_failed",
                         message: "could not open existing protected store with current schema",
@@ -1489,11 +1531,12 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Sources {
             command: SourcesCommands::List,
         } => {
-            let sources = dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
-                code: "source_load_failed",
-                message: "could not load trusted source configuration",
-                trace: Vec::new(),
-            })?;
+            let sources =
+                dich_apt::load_configured_sources(&paths.config).map_err(|_| CliError {
+                    code: "source_load_failed",
+                    message: "could not load trusted source configuration",
+                    trace: Vec::new(),
+                })?;
             if cli.json {
                 let entries: Vec<_> = sources.iter().map(|source| serde_json::json!({
                     "distribution": match source.distribution() { dich_apt::Distribution::Debian => "debian", dich_apt::Distribution::Ubuntu => "ubuntu" },
@@ -1521,6 +1564,9 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Gc { dry_run, execute } => {
             #[cfg(target_os = "linux")]
             {
+                if execute {
+                    paths::ensure_private_directory(&paths.store_dir)?;
+                }
                 let mode = if execute {
                     dich_store::GcMode::Execute
                 } else {
@@ -1528,7 +1574,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     dich_store::GcMode::DryRun
                 };
                 let mut db =
-                    dich_store::MetadataDb::open_existing(&cli.store_dir).map_err(|_| {
+                    dich_store::MetadataDb::open_existing(&paths.store_dir).map_err(|_| {
                         CliError {
                             code: "store_open_failed",
                             message: "could not open existing protected store with current schema",

@@ -164,7 +164,9 @@ fn stage_with_hook(
     )
     .map_err(|_| StageError::Filesystem)?;
     let stat = fs::fstat(&tmp).map_err(|_| StageError::Filesystem)?;
-    if stat.st_uid != 0 || (stat.st_mode & 0o022 != 0 && stat.st_mode & 0o1000 == 0) {
+    if (stat.st_uid != 0 && stat.st_uid != rustix::process::geteuid().as_raw())
+        || (stat.st_mode & 0o022 != 0 && stat.st_mode & 0o1000 == 0)
+    {
         return Err(StageError::Filesystem);
     }
     use std::os::unix::fs::PermissionsExt;

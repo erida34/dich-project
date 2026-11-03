@@ -31,6 +31,9 @@ dich-deb = { path = "../dich-deb" }
 dich-engine = { path = "../dich-engine" }
 serde_json = "1"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
+
 [dev-dependencies]
 tempfile = "3"
 sha2 = "0.10"
