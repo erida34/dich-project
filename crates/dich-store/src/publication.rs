@@ -221,7 +221,7 @@ pub(crate) fn private_dir(root: &OwnedFd, name: &str) -> Result<OwnedFd, Publica
     let root_stat = fs::fstat(root).map_err(|_| PublicationError::Io)?;
     if FileType::from_raw_mode(stat.st_mode) != FileType::Directory
         || (stat.st_uid != 0 && stat.st_uid != geteuid().as_raw())
-        || stat.st_mode & 0o077 != 0
+        || stat.st_mode & 0o7077 != 0
         || stat.st_dev != root_stat.st_dev
     {
         return Err(PublicationError::UnsafePath);

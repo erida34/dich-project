@@ -310,3 +310,22 @@ fn partial_marker_can_only_be_removed_from_empty_uninitialized_store() {
         3
     );
 }
+
+#[test]
+fn rejects_special_mode_bits_on_metadata_paths() {
+    for name in ["metadata.sqlite3", "metadata.lock", "metadata.initializing"] {
+        for bits in [0o1600, 0o2600, 0o4600] {
+            let root = private_dir();
+            drop(MetadataDb::open(root.path()).unwrap());
+            let path = root.path().join(name);
+            if name == "metadata.initializing" {
+                std::fs::write(&path, b"dich-metadata-init-v1\n").unwrap();
+            }
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(bits)).unwrap();
+            assert!(MetadataDb::open(root.path()).is_err(), "{name}: {bits:o}");
+        }
+    }
+    let root = private_dir();
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o2700)).unwrap();
+    assert!(MetadataDb::open(root.path()).is_err());
+}

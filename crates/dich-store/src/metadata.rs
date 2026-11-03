@@ -472,7 +472,7 @@ fn check_dir(fd: &impl std::os::fd::AsFd, private: bool) -> Result<(), MetadataE
     let stat = fs::fstat(fd).map_err(|_| MetadataError::UnsafePath)?;
     if FileType::from_raw_mode(stat.st_mode) != FileType::Directory
         || (stat.st_uid != 0 && stat.st_uid != geteuid().as_raw())
-        || stat.st_mode & if private { 0o077 } else { 0o022 } != 0
+        || stat.st_mode & if private { 0o7077 } else { 0o7022 } != 0
     {
         return Err(MetadataError::UnsafePath);
     }
@@ -482,7 +482,7 @@ fn check_file(fd: &impl std::os::fd::AsFd) -> Result<(), MetadataError> {
     let stat = fs::fstat(fd).map_err(|_| MetadataError::UnsafePath)?;
     if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile
         || (stat.st_uid != 0 && stat.st_uid != geteuid().as_raw())
-        || stat.st_mode & 0o077 != 0
+        || stat.st_mode & 0o7077 != 0
         || stat.st_nlink != 1
         || stat.st_size < 0
         || stat.st_size > 64 * 1024 * 1024

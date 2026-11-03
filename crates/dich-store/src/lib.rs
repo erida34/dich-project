@@ -1128,4 +1128,14 @@ mod tree_tests {
             Err(PublicationError::Collision)
         ));
     }
+    #[test]
+    fn inventory_rejects_special_bits_on_private_directories() {
+        for name in ["objects", "staging"] {
+            let (root, db, _identity, _stage) = fixture();
+            let path = root.path().join(name);
+            std::fs::create_dir(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o2700)).unwrap();
+            assert!(db.recovery_inventory().is_err(), "{name}");
+        }
+    }
 }
