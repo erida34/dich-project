@@ -60,7 +60,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Rootless mode for development; privileged operations mediated by minimal audited boundary (daemon only if justified) (ADR 0032).
 - [x] HTTPS/proxy/timeouts/retries, bandwidth and disk limits, cancellation, offline mode, file descriptor/race abuse tests (ADR 0033).
 - [x] Security review of key handling, filesystem/TOCTOU attacks, paths, symlinks, privilege model and container limits (ADR 0034).
-- [ ] Benchmarks for cold/warm metadata sync, package dedup and GC; performance budgets.
+- [x] Benchmarks for cold/warm metadata sync, package dedup and GC; performance budgets (ADR 0035).
 - [ ] Integration tests on supported Debian/Ubuntu LTS/current releases; documented support matrix and unsupported targets.
 
 ## Phase 7 — public release (v1.0.0 only after criteria)

@@ -20,6 +20,10 @@ path = "src/main.rs"
 name = "dich-gen-docs"
 path = "src/bin/gen_docs.rs"
 
+[[bench]]
+name = "performance_benchmarks"
+harness = false
+
 [dependencies]
 clap.workspace = true
 clap_mangen.workspace = true
