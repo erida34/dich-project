@@ -6,11 +6,15 @@ mod metadata;
 #[cfg(target_os = "linux")]
 mod publication;
 #[cfg(target_os = "linux")]
+mod recovery;
+#[cfg(target_os = "linux")]
 mod tree;
 #[cfg(target_os = "linux")]
 pub use metadata::{MetadataDb, MetadataError};
 #[cfg(target_os = "linux")]
 pub use publication::{PublicationError, PublicationOutcome};
+#[cfg(target_os = "linux")]
+pub use recovery::RecoveryInventory;
 #[cfg(target_os = "linux")]
 pub use tree::TreeOutcome;
 
@@ -881,5 +885,103 @@ mod tree_tests {
             ));
             assert_eq!(db.test_tree_count(), 1);
         }
+    }
+    #[test]
+    #[ignore = "subprocess crash helper"]
+    fn tree_child_exits_at_boundary() {
+        let target = match std::env::var_os("DICH_TREE_CRASH_ROOT") {
+            Some(v) => v,
+            None => return,
+        };
+        let point = match std::env::var("DICH_TREE_CRASH_POINT").unwrap().as_str() {
+            "before_file" => FailurePoint::BeforeFileSync,
+            "after_file" => FailurePoint::AfterFileSync,
+            "after_rename" => FailurePoint::AfterRename,
+            "after_dirs" => FailurePoint::AfterDirectorySync,
+            "before_commit" => FailurePoint::BeforeCommit,
+            "after_commit" => FailurePoint::AfterCommit,
+            _ => panic!("invalid test point"),
+        };
+        let (_fixture_root, _fixture_db, identity, stage) = fixture();
+        let mut db = MetadataDb::open(std::path::Path::new(&target)).unwrap();
+        let _ = publish_tree_for_test(&mut db, &identity, &stage, point);
+        panic!("injected process exit did not occur");
+    }
+    #[test]
+    fn abrupt_tree_publication_exit_can_be_retried() {
+        for point in [
+            "before_file",
+            "after_file",
+            "after_rename",
+            "after_dirs",
+            "before_commit",
+            "after_commit",
+        ] {
+            let (root, db, identity, stage) = fixture();
+            drop(db);
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "tree_tests::tree_child_exits_at_boundary",
+                ])
+                .env("DICH_TREE_CRASH_ROOT", root.path())
+                .env("DICH_TREE_CRASH_POINT", point)
+                .env("DICH_INJECT_PROCESS_EXIT", "1")
+                .status()
+                .unwrap();
+            assert_eq!(status.code(), Some(86), "{point}");
+            let mut db = MetadataDb::open(root.path()).unwrap();
+            assert!(
+                publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).is_ok(),
+                "{point}"
+            );
+            assert_eq!(db.test_tree_count(), 1);
+        }
+    }
+    #[test]
+    fn recovery_inventory_reports_staging_and_orphans_without_deleting() {
+        let (root, mut db, identity, stage) = fixture();
+        assert!(
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::AfterRename).is_err()
+        );
+        let inventory = db.recovery_inventory().unwrap();
+        assert_eq!(inventory.orphan_trees, vec![identity.hex()]);
+        assert!(inventory.staged.is_empty());
+        assert!(
+            root.path()
+                .join("objects")
+                .join(format!("{}.tree", identity.hex()))
+                .exists()
+        );
+        assert!(publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).is_ok());
+        assert!(db.recovery_inventory().unwrap().orphan_trees.is_empty());
+        let (_root2, mut db2, identity2, stage2) = fixture();
+        assert!(
+            publish_tree_for_test(&mut db2, &identity2, &stage2, FailurePoint::BeforeFileSync)
+                .is_err()
+        );
+        assert_eq!(db2.recovery_inventory().unwrap().staged.len(), 1);
+    }
+    #[test]
+    fn inventory_reports_missing_and_unknown_entries_without_following_links() {
+        use std::os::unix::fs::symlink;
+        let (root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let objects = root.path().join("objects");
+        std::fs::rename(
+            objects.join(format!("{}.tree", identity.hex())),
+            objects.join("unrecognized"),
+        )
+        .unwrap();
+        symlink(
+            stage.root.path(),
+            objects.join(format!("{}.tree", identity.hex())),
+        )
+        .unwrap();
+        let report = db.recovery_inventory().unwrap();
+        assert_eq!(report.missing_trees, vec![identity.hex()]);
+        assert_eq!(report.unexpected.len(), 2);
+        assert!(stage.root.path().join("usr/file").exists());
     }
 }
