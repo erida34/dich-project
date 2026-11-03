@@ -3,7 +3,7 @@
 #[cfg(target_os = "linux")]
 mod staging;
 #[cfg(target_os = "linux")]
-pub use staging::{StageError, StagedArchive, stage_cached};
+pub use staging::{StageError, StagedArchive, StagedFile, stage_cached};
 
 use std::{
     error::Error,
@@ -544,6 +544,17 @@ mod staging_tests {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"data");
+        assert_eq!(stage.files().len(), 1);
+        assert_eq!(stage.files()[0].path, "usr/share/example");
+        assert_eq!(stage.files()[0].size, 4);
+        assert_eq!(
+            stage.files()[0].sha256,
+            "3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7"
+        );
+        assert_eq!(
+            stage.directories(),
+            &["usr".to_string(), "usr/share".to_string()]
+        );
         assert!(stage.open_file("../etc/passwd").is_err());
         assert!(stage.open_file("/etc/passwd").is_err());
         use std::os::unix::fs::PermissionsExt;

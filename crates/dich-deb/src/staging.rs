@@ -2,12 +2,14 @@
 use crate::{
     ArchiveReport, DebError, Limits, decompress, inspect_deb, normalize_path, preflight_ar,
 };
-use dich_apt::{AuthorizedArtifact, SnapshotJournal};
+use dich_apt::{AuthorizedArtifact, IndexedArtifact, SnapshotJournal};
 use rustix::fs::{self, Mode, OFlags, ResolveFlags};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::{
     error::Error,
     fmt,
-    io::{Cursor, Read},
+    io::{Cursor, Read, Write},
     path::Path,
     time::SystemTime,
 };
@@ -24,13 +26,33 @@ impl fmt::Display for StageError {
     }
 }
 impl Error for StageError {}
+/// Digest and size of a file written into a private staging tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagedFile {
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
+}
 /// Temporary, private files only; dropping this object removes the staging tree best-effort.
 pub struct StagedArchive {
     _directory: tempfile::TempDir,
     root: std::os::fd::OwnedFd,
     report: ArchiveReport,
+    files: Vec<StagedFile>,
+    directories: Vec<String>,
+    artifact: Option<IndexedArtifact>,
 }
 impl StagedArchive {
+    /// Whether this stage was derived from the same authenticated index record; freshness must be rechecked separately.
+    pub fn is_bound_to(&self, authorized: &AuthorizedArtifact) -> bool {
+        self.artifact.as_ref() == Some(authorized.artifact())
+    }
+    pub fn files(&self) -> &[StagedFile] {
+        &self.files
+    }
+    pub fn directories(&self) -> &[String] {
+        &self.directories
+    }
     /// Archive metadata, including script hashes and trigger presence; never an execution permit.
     pub fn report(&self) -> &ArchiveReport {
         &self.report
@@ -86,13 +108,14 @@ pub fn stage_cached(
     if bytes.len() > limits.max_archive_bytes {
         return Err(StageError::Archive(DebError::Limit));
     }
-    let stage = stage_untrusted(&bytes, limits)?;
+    let mut stage = stage_untrusted(&bytes, limits)?;
     if !authorized.is_valid_at(SystemTime::now()) {
         return Err(StageError::Authentication);
     }
     journal
         .load_artifact(authorized)
         .map_err(|_| StageError::Authentication)?;
+    stage.artifact = Some(authorized.artifact().clone());
     Ok(stage)
 }
 
@@ -164,6 +187,8 @@ fn stage_with_hook(
     }
     hook(directory.path());
     check_attached(&tmp, leaf, &stage_stat)?;
+    let mut staged_files = Vec::new();
+    let mut staged_directories = BTreeSet::new();
     let mut archive = tar::Archive::new(Cursor::new(&data));
     for entry in archive
         .entries()
@@ -197,6 +222,7 @@ fn stage_with_hook(
             }
             relative.push_str(part);
             let _ = open_directory(&root, &relative)?;
+            staged_directories.insert(relative.clone());
         }
         if !directory_entry {
             let fd = fs::openat2(
@@ -211,18 +237,47 @@ fn stage_with_hook(
             )
             .map_err(|_| StageError::Filesystem)?;
             let mut file = std::fs::File::from(fd);
-            let copied =
-                std::io::copy(&mut entry, &mut file).map_err(|_| StageError::Filesystem)?;
+            let mut hash = Sha256::new();
+            let mut copied = 0u64;
+            let mut buffer = [0u8; 65536];
+            loop {
+                let size = entry
+                    .read(&mut buffer)
+                    .map_err(|_| StageError::Filesystem)?;
+                if size == 0 {
+                    break;
+                }
+                copied = copied
+                    .checked_add(size as u64)
+                    .ok_or(StageError::Filesystem)?;
+                hash.update(&buffer[..size]);
+                file.write_all(&buffer[..size])
+                    .map_err(|_| StageError::Filesystem)?;
+            }
             if copied != entry.size() {
                 return Err(StageError::Filesystem);
             }
+            let sha256 = hash
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            staged_files.push(StagedFile {
+                path: name.into(),
+                size: copied,
+                sha256,
+            });
         }
     }
     check_attached(&tmp, leaf, &stage_stat)?;
+    staged_files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(StagedArchive {
         _directory: directory,
         root,
         report,
+        files: staged_files,
+        directories: staged_directories.into_iter().collect(),
+        artifact: None,
     })
 }
 fn check_attached(

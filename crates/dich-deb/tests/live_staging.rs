@@ -34,6 +34,7 @@ fn stages_verified_ubuntu_artifact_without_running_scripts() {
     let verified = journal.fetch_artifact(&authorized, 1_000_000).unwrap();
     journal.store_artifact(&authorized, verified).unwrap();
     let stage = stage_cached(&journal, &authorized, Limits::default()).unwrap();
+    assert!(stage.is_bound_to(&authorized));
     let file = stage
         .open_file("lib/firmware/skl_hda_dsp_generic-tplg.bin")
         .unwrap();
