@@ -175,7 +175,7 @@
 
 - 2026-11-03: Hosted CI after the smoke-policy correction completed the four-distro package install/reinstall/remove matrix successfully. Rust tests exposed an executable-mode defect: two checked-in ELF test harnesses were tracked as mode 100644 but invoked directly; WSL DrvFS masked this because it presents files as executable. Corrected the Git executable bits and pinned the Rust CI runner to Ubuntu 22.04 after the `ubuntu-latest` alias had already moved to 26.04. The Rust suite must rerun before its gate is considered green.
 
-- 2026-11-03: On the next hosted run, format, clippy, full workspace tests and docs passed, but `cargo-deny-action` rejected the removed `advisories.unsound` configuration key; `unmaintained` was removed with it. Dropped both obsolete keys because modern cargo-deny denies these advisory classes by default, while retaining explicit `yanked = "deny"`. Recheck with local cargo-deny, then rerun hosted CI.
+- 2026-11-03: On the hosted run after that config cleanup, format, clippy, full workspace tests and docs passed, but the action's bundled cargo-deny could not parse the current RustSec advisory record format (`RUSTSEC-2026-0211`). Local `cargo-deny 0.20.2` and `cargo-audit 0.22.2` parse the same local advisory database. CI and release workflows now install both pinned CLI versions with locked dependencies and invoke them directly. Local audit checks pass; hosted revalidation is pending.
 
 
 

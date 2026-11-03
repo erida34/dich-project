@@ -19,6 +19,7 @@ The project roadmap requires:
 - Introduce `deny.toml` configured to deny known vulnerabilities, unmaintained/unsound crates, non-permissive licenses, wildcard dependencies, and unapproved registries.
 - Introduce `audit.toml` configured for `cargo-audit` vulnerability scanning against the RustSec Advisory Database.
 - Add `cargo-deny` and `cargo-audit` checks to `.github/workflows/ci.yml`.
+- Install both audit CLIs at locked versions in CI and release jobs rather than relying on action images that bundle parsers which may lag the RustSec advisory format.
 - Generate SPDX 2.3 from the locked `dich-cli` dependency graph with pinned `cargo-sbom`; package facts must not be hardcoded to a sample version.
 
 ### 2. Permissive License Standard

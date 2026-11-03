@@ -7,6 +7,7 @@ Dich maintains a conservative dependency posture. In accordance with project eng
 - **Audit & Review**: Every external dependency must be evaluated for security maintenance, vulnerability history, and minimal dependency trees.
 - **Pinned Lockfile**: Application builds strictly enforce `--locked` with all dependency checksums recorded in `Cargo.lock`.
 - **Automated Security Gates**: CI continuously audits dependencies via `cargo-audit` (RustSec Advisory Database) and enforces compliance via `cargo-deny`.
+- CI and release jobs install `cargo-deny` 0.20.2 and `cargo-audit` 0.22.2 with `--locked`; pinning the CLI tools avoids stale action images that cannot parse current RustSec advisory records.
 
 ## 2. License Compliance Policy
 
