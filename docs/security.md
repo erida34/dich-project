@@ -59,3 +59,5 @@ Staging rejects all archive links and extension records rather than preserving t
 Known maintainer scripts are reported only by name, size and SHA256, and trigger-file presence is recorded (ADR 0016). Their content is never executed or copied to the data staging tree. This does not yet analyze trigger semantics or all control metadata and does not authorize installation.
 
 Store identity v1 is derived only after the cache rechecks a signed authorization and artifact digest. Equal identity manifests are not sufficient proof that existing stored bytes match; actual object verification and safe deduplication remain unimplemented. Different source/snapshot contexts deliberately produce different identities.
+
+The preliminary store metadata database (ADR 0018) requires an existing private, trusted directory, rejects symlink/hardlink database and lock files, uses an exclusive advisory lock and configures SQLite WAL with synchronous FULL. It does not yet publish objects or prove cross-filesystem crash consistency. Same-UID adversaries, interrupted initialization, network filesystems and real power loss remain unresolved.

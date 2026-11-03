@@ -1,6 +1,11 @@
 #![forbid(unsafe_code)]
 //! Store identity and future durable storage.
 
+#[cfg(target_os = "linux")]
+mod metadata;
+#[cfg(target_os = "linux")]
+pub use metadata::{MetadataDb, MetadataError};
+
 use sha2::{Digest, Sha256};
 use std::{error::Error, fmt};
 

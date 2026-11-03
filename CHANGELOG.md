@@ -11,4 +11,5 @@
 - Added Linux-only private staging of verified cached artifacts with conservative archive and path rejection; no store activation.
 - Record known maintainer script hashes and trigger-file presence without executing scripts.
 - Added source-bound canonical store identity derivation; persistence and deduplication are not implemented.
+- Added an experimental protected SQLite WAL metadata foundation; object publication and recovery are not implemented.
 - Project definition, developer guide, Rust workspace stub, documentation and release-pipeline scaffold.
