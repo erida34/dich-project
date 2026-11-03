@@ -29,7 +29,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Resolver tests for duplicate names/versions, virtual packages, conflicts, downgrades, cyclic dependencies, arch mismatch (downgrade test uses an explicit fixture baseline; profile transitions remain unimplemented).
 
 ## Phase 3 — safe artifact handling and immutable store (v0.4.x)
-- [ ] Read `.deb` ar envelope, control/data tar streams, limits for entries/expanded bytes/files/nesting/path lengths.
+- [x] Read `.deb` ar envelope, control/data tar streams, limits for entries/expanded bytes/files/nesting/path lengths (bounded read-only subset; no extraction).
 - [ ] Safe extraction that prevents `..`, absolute paths, symlink/hardlink escapes, devices, FIFOs, setuid/setgid, xattrs/capabilities unless explicitly approved.
 - [ ] Treat package scripts as metadata only; never execute in host root context.
 - [ ] Adopt canonical store identity hashing verified content plus source/build context and policy version; collision handling and dedup semantics.

@@ -17,7 +17,7 @@ Dich will download **original `.deb` files from verified APT repositories**, ana
 
 ## Quick start (development)
 
-Prerequisites: supported Rust toolchain with Cargo, Debian/Ubuntu system for integration tests. Linux is the target; initial development may be run on other hosts for model tests only.
+Prerequisites: supported Rust toolchain with Cargo, Debian/Ubuntu system for integration tests, and `gpg`, `gpgv`, `prlimit`, `gzip`, `xz` and `zstd` for the relevant fixture tests. Linux is the target; initial development may be run on other hosts for model tests only.
 
 ```sh
 cargo run -p dich-cli -- --help

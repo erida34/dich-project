@@ -137,3 +137,139 @@ fn rejects_limits_on_entry_count_file_size_and_path_depth() {
         assert!(inspect_deb(&bytes, limits).is_err());
     }
 }
+
+#[cfg(target_os = "linux")]
+fn compress(program: &str, bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(program)
+        .arg("-c")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    output.stdout
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn reads_gzip_xz_and_zstd_members_with_limits() {
+    let control = tar_with_file("control", b"Package: sample\nVersion: 1\n");
+    let data = tar_with_file("usr/share/sample", b"hello");
+    for (program, control_name, data_name) in [
+        ("/usr/bin/gzip", "control.tar.gz", "data.tar.gz"),
+        ("/usr/bin/xz", "control.tar.xz", "data.tar.xz"),
+        ("/usr/bin/zstd", "control.tar.zst", "data.tar.zst"),
+    ] {
+        let control_compressed = compress(program, &control);
+        let data_compressed = compress(program, &data);
+        let bytes = deb(&[
+            ("debian-binary", b"2.0\n"),
+            (control_name, &control_compressed),
+            (data_name, &data_compressed),
+        ]);
+        assert_eq!(
+            inspect_deb(&bytes, Limits::default())
+                .unwrap_or_else(|e| panic!("{program}: {e}"))
+                .data_file_bytes,
+            5
+        );
+        let too_small = Limits {
+            max_expanded_tar_bytes: 512,
+            ..Limits::default()
+        };
+        assert!(inspect_deb(&bytes, too_small).is_err());
+    }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn rejects_corrupt_truncated_and_overexpanding_compressed_members() {
+    let control = tar_with_file("control", b"Package: sample\nVersion: 1\n");
+    let bomb = tar_with_file("large", &vec![0; 1024 * 1024]);
+    for (program, data_name) in [
+        ("/usr/bin/gzip", "data.tar.gz"),
+        ("/usr/bin/xz", "data.tar.xz"),
+        ("/usr/bin/zstd", "data.tar.zst"),
+    ] {
+        let compressed = compress(program, &bomb);
+        let bytes = deb(&[
+            ("debian-binary", b"2.0\n"),
+            ("control.tar", &control),
+            (data_name, &compressed),
+        ]);
+        let limits = Limits {
+            max_expanded_tar_bytes: 65536,
+            ..Limits::default()
+        };
+        assert!(
+            inspect_deb(&bytes, limits).is_err(),
+            "bomb accepted: {program}"
+        );
+        let truncated = &compressed[..compressed.len() - 3];
+        let bytes = deb(&[
+            ("debian-binary", b"2.0\n"),
+            ("control.tar", &control),
+            (data_name, truncated),
+        ]);
+        assert!(
+            inspect_deb(&bytes, Limits::default()).is_err(),
+            "truncation accepted: {program}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires the hash-checked Ubuntu noble alsa-topology-conf sample"]
+fn inspects_real_ubuntu_noble_sample() {
+    let path = std::env::var("DICH_DEB_SAMPLE").unwrap();
+    let bytes = std::fs::read(path).unwrap();
+    let report = inspect_deb(&bytes, Limits::default()).unwrap();
+    assert!(report.control_entries >= 1);
+    assert!(report.data_entries >= 1);
+    assert!(report.data_file_bytes > 0);
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn rejects_concatenated_compressed_archives_and_trailing_tar_content() {
+    let control = tar_with_file("control", b"metadata");
+    let data = tar_with_file("first", b"one");
+    let extra = tar_with_file("second", b"two");
+    for (program, data_name) in [
+        ("/usr/bin/gzip", "data.tar.gz"),
+        ("/usr/bin/xz", "data.tar.xz"),
+        ("/usr/bin/zstd", "data.tar.zst"),
+    ] {
+        let mut compressed = compress(program, &data);
+        compressed.extend_from_slice(&compress(program, &extra));
+        let bytes = deb(&[
+            ("debian-binary", b"2.0\n"),
+            ("control.tar", &control),
+            (data_name, &compressed),
+        ]);
+        assert!(
+            inspect_deb(&bytes, Limits::default()).is_err(),
+            "concatenated stream accepted: {program}"
+        );
+    }
+}
+
+#[test]
+fn file_count_limit_applies_across_control_and_data() {
+    let control = tar_with_file("control", b"metadata");
+    let data = tar_with_file("file", b"hello");
+    let bytes = deb(&[
+        ("debian-binary", b"2.0\n"),
+        ("control.tar", &control),
+        ("data.tar", &data),
+    ]);
+    let limits = Limits {
+        max_files: 1,
+        ..Limits::default()
+    };
+    assert!(inspect_deb(&bytes, limits).is_err());
+}
