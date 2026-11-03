@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Dich versioned package store CLI (experimental scaffold)"
+description = "Dich versioned package store CLI for authenticated Debian and Ubuntu DSO profiles"
 readme = "../../README.md"
 
 [lib]
@@ -28,6 +28,7 @@ dich-apt = { path = "../dich-apt" }
 dich-core = { path = "../dich-core" }
 dich-store = { path = "../dich-store" }
 dich-deb = { path = "../dich-deb" }
+dich-engine = { path = "../dich-engine" }
 serde_json = "1"
 
 [dev-dependencies]
@@ -46,7 +47,7 @@ maintainer = "Dich Maintainers"
 section = "admin"
 priority = "optional"
 depends = "$auto, gpgv, util-linux, gzip, xz-utils, zstd"
-extended-description = "Experimental Rust CLI scaffold for a planned versioned package store using verified Debian/Ubuntu APT repositories. Package installation is not implemented in this version."
+extended-description = "Experimental versioned package store using verified Debian/Ubuntu APT repositories. Profile installation is restricted to authenticated x86-64 glibc shared-object closures; package code is not executed and host loader state is not modified."
 assets = [
   ["target/release/dich", "usr/bin/", "755"],
   ["../../packaging/generated/man/*.1", "usr/share/man/man1/", "644"],

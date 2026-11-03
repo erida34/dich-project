@@ -15,7 +15,8 @@ use std::{
 };
 
 const LEGACY_MANIFEST_PREFIX: &[u8] = b"dich.profile.generation\0v1\0";
-const MANIFEST_PREFIX: &[u8] = b"dich.profile.generation\0v2\0";
+const PARENT_MANIFEST_PREFIX: &[u8] = b"dich.profile.generation\0v2\0";
+const MANIFEST_PREFIX: &[u8] = b"dich.profile.generation\0v3\0";
 const MAX_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +30,7 @@ pub struct ProfileGeneration {
     pub profile: String,
     pub generation_id: String,
     pub previous_id: Option<String>,
+    pub requested_package: Option<String>,
     pub graph_id: String,
     pub graph: ReferenceGraph,
 }
@@ -42,6 +44,27 @@ impl MetadataDb {
         profile_name: &str,
         graph_id: &str,
     ) -> Result<(ProfileGeneration, ProfileOutcome), PublicationError> {
+        self.publish_profile_generation_inner(profile_name, None, graph_id)
+    }
+
+    /// Publish a package-labelled profile generation. The label identifies the requested root;
+    /// the graph still contains every committed object selected by the resolver.
+    pub fn publish_package_profile_generation(
+        &mut self,
+        profile_name: &str,
+        requested_package: &str,
+        graph_id: &str,
+    ) -> Result<(ProfileGeneration, ProfileOutcome), PublicationError> {
+        validate_package_name(requested_package)?;
+        self.publish_profile_generation_inner(profile_name, Some(requested_package), graph_id)
+    }
+
+    fn publish_profile_generation_inner(
+        &mut self,
+        profile_name: &str,
+        requested_package: Option<&str>,
+        graph_id: &str,
+    ) -> Result<(ProfileGeneration, ProfileOutcome), PublicationError> {
         validate_profile_name(profile_name)?;
         let graph = self.read_reference_graph(graph_id)?;
         let profiles = private_dir(&self.root, "profiles")?;
@@ -50,14 +73,29 @@ impl MetadataDb {
         let current = read_profile_dir(self, &profile, profile_name)?;
         if let Some(current) = &current
             && current.graph_id == graph_id
+            && current.requested_package.as_deref() == requested_package
         {
             return Ok((current.clone(), ProfileOutcome::Reused));
         }
-        let previous_id = current.map(|generation| generation.generation_id);
+        let removed = if current.is_none() {
+            read_removed_profile_dir(self, &profile, profile_name)?
+        } else {
+            None
+        };
+        if let Some(removed) = &removed
+            && removed.requested_package.as_deref() != requested_package
+        {
+            return Err(PublicationError::Unsupported);
+        }
+        let previous_id = match current {
+            Some(generation) => Some(generation.generation_id),
+            None => removed.map(|generation| generation.generation_id),
+        };
         let manifest = encode_manifest(
             profile_name,
             graph_id,
             previous_id.as_deref(),
+            requested_package,
             graph.canonical(),
         )?;
         let generation_id = hash_hex(&manifest);
@@ -70,6 +108,7 @@ impl MetadataDb {
                 profile: profile_name.to_owned(),
                 generation_id,
                 previous_id,
+                requested_package: requested_package.map(str::to_owned),
                 graph_id: graph_id.to_owned(),
                 graph,
             },
@@ -100,13 +139,51 @@ impl MetadataDb {
         validate_profile_name(profile_name)?;
         let profiles = open_private_dir(&self.root, "profiles")?;
         let profile = open_private_dir(&profiles, profile_name)?;
-        let current =
-            read_profile_dir(self, &profile, profile_name)?.ok_or(PublicationError::Unsupported)?;
+        let (current, was_removed) = match read_profile_dir(self, &profile, profile_name)? {
+            Some(current) => (current, false),
+            None => (
+                read_removed_profile_dir(self, &profile, profile_name)?
+                    .ok_or(PublicationError::Unsupported)?,
+                true,
+            ),
+        };
         let previous = current.previous_id.ok_or(PublicationError::Unsupported)?;
         let generations = open_private_dir(&profile, "generations")?;
         let generation = read_generation(self, &generations, profile_name, &previous)?;
         switch_current(&profile, &generation.generation_id)?;
+        if was_removed {
+            fs::unlinkat(&profile, "removed", AtFlags::empty())
+                .map_err(|_| PublicationError::Io)?;
+            fs::fsync(&profile).map_err(|_| PublicationError::Io)?;
+        }
         Ok(generation)
+    }
+
+    /// Move the selected package generation to an inactive pointer. Its history remains available
+    /// for rollback, and its objects remain referenced by immutable manifests.
+    pub fn remove_package_profile_generation(
+        &mut self,
+        profile_name: &str,
+        requested_package: &str,
+    ) -> Result<ProfileGeneration, PublicationError> {
+        validate_profile_name(profile_name)?;
+        validate_package_name(requested_package)?;
+        let profiles = open_private_dir(&self.root, "profiles")?;
+        let profile = open_private_dir(&profiles, profile_name)?;
+        let current =
+            read_profile_dir(self, &profile, profile_name)?.ok_or(PublicationError::Unsupported)?;
+        if current.requested_package.as_deref() != Some(requested_package) {
+            return Err(PublicationError::Unsupported);
+        }
+        // Validate an existing tombstone before replacing it; never overwrite an unknown entry.
+        let _ = read_removed_profile_dir(self, &profile, profile_name)?;
+        if fs::readlinkat(&profile, "removed", Vec::new()).is_ok() {
+            fs::unlinkat(&profile, "removed", AtFlags::empty())
+                .map_err(|_| PublicationError::Io)?;
+        }
+        fs::renameat(&profile, "current", &profile, "removed").map_err(|_| PublicationError::Io)?;
+        fs::fsync(&profile).map_err(|_| PublicationError::Io)?;
+        Ok(current)
     }
 
     /// List active profile generations in stable name order. Incomplete profile directories
@@ -144,7 +221,24 @@ fn read_profile_dir(
     profile: &OwnedFd,
     profile_name: &str,
 ) -> Result<Option<ProfileGeneration>, PublicationError> {
-    let target = match fs::readlinkat(profile, "current", Vec::new()) {
+    read_pointer_generation(db, profile, profile_name, "current")
+}
+
+fn read_removed_profile_dir(
+    db: &MetadataDb,
+    profile: &OwnedFd,
+    profile_name: &str,
+) -> Result<Option<ProfileGeneration>, PublicationError> {
+    read_pointer_generation(db, profile, profile_name, "removed")
+}
+
+fn read_pointer_generation(
+    db: &MetadataDb,
+    profile: &OwnedFd,
+    profile_name: &str,
+    pointer_name: &str,
+) -> Result<Option<ProfileGeneration>, PublicationError> {
+    let target = match fs::readlinkat(profile, pointer_name, Vec::new()) {
         Ok(target) => target,
         Err(rustix::io::Errno::NOENT) => return Ok(None),
         Err(_) => return Err(PublicationError::UnsafePath),
@@ -170,24 +264,25 @@ fn read_generation(
     if hash_hex(&bytes) != generation_id {
         return Err(PublicationError::Integrity);
     }
-    let (manifest_profile, graph_id, previous_id, graph_bytes) = decode_manifest(&bytes)?;
-    if manifest_profile != profile_name {
+    let manifest = decode_manifest(&bytes)?;
+    if manifest.profile != profile_name {
         return Err(PublicationError::Integrity);
     }
     let graph =
-        ReferenceGraph::from_canonical(&graph_bytes).map_err(|_| PublicationError::Integrity)?;
-    if hash_hex(&graph_bytes) != graph_id {
+        ReferenceGraph::from_canonical(&manifest.graph).map_err(|_| PublicationError::Integrity)?;
+    if hash_hex(&manifest.graph) != manifest.graph_id {
         return Err(PublicationError::Integrity);
     }
-    let recorded = db.read_reference_graph(&graph_id)?;
+    let recorded = db.read_reference_graph(&manifest.graph_id)?;
     if recorded != graph {
         return Err(PublicationError::Integrity);
     }
     Ok(ProfileGeneration {
         profile: profile_name.to_owned(),
         generation_id: generation_id.to_owned(),
-        previous_id,
-        graph_id,
+        previous_id: manifest.previous_id,
+        requested_package: manifest.requested_package,
+        graph_id: manifest.graph_id,
         graph,
     })
 }
@@ -284,6 +379,7 @@ fn encode_manifest(
     profile_name: &str,
     graph_id: &str,
     previous_id: Option<&str>,
+    requested_package: Option<&str>,
     graph: &[u8],
 ) -> Result<Vec<u8>, PublicationError> {
     if graph.len() > MAX_MANIFEST_BYTES {
@@ -293,6 +389,7 @@ fn encode_manifest(
     append_field(&mut bytes, profile_name.as_bytes())?;
     append_field(&mut bytes, graph_id.as_bytes())?;
     append_field(&mut bytes, previous_id.unwrap_or("").as_bytes())?;
+    append_field(&mut bytes, requested_package.unwrap_or("").as_bytes())?;
     append_field(&mut bytes, graph)?;
     if bytes.len() > MAX_MANIFEST_BYTES {
         return Err(PublicationError::Limit);
@@ -300,16 +397,24 @@ fn encode_manifest(
     Ok(bytes)
 }
 
-fn decode_manifest(
-    bytes: &[u8],
-) -> Result<(String, String, Option<String>, Vec<u8>), PublicationError> {
+struct DecodedManifest {
+    profile: String,
+    graph_id: String,
+    previous_id: Option<String>,
+    requested_package: Option<String>,
+    graph: Vec<u8>,
+}
+
+fn decode_manifest(bytes: &[u8]) -> Result<DecodedManifest, PublicationError> {
     if bytes.len() > MAX_MANIFEST_BYTES {
         return Err(PublicationError::Integrity);
     }
-    let (prefix, has_previous) = if bytes.starts_with(MANIFEST_PREFIX) {
-        (MANIFEST_PREFIX, true)
+    let (prefix, has_previous, has_package) = if bytes.starts_with(MANIFEST_PREFIX) {
+        (MANIFEST_PREFIX, true, true)
+    } else if bytes.starts_with(PARENT_MANIFEST_PREFIX) {
+        (PARENT_MANIFEST_PREFIX, true, false)
     } else if bytes.starts_with(LEGACY_MANIFEST_PREFIX) {
-        (LEGACY_MANIFEST_PREFIX, false)
+        (LEGACY_MANIFEST_PREFIX, false, false)
     } else {
         return Err(PublicationError::Integrity);
     };
@@ -318,6 +423,11 @@ fn decode_manifest(
     let graph_id = read_field(&mut cursor, 64)?;
     let previous_id = if has_previous {
         read_field(&mut cursor, 64)?
+    } else {
+        Vec::new()
+    };
+    let requested_package = if has_package {
+        read_field(&mut cursor, 128)?
     } else {
         Vec::new()
     };
@@ -338,8 +448,29 @@ fn decode_manifest(
         validate_digest(&previous_id)?;
         Some(previous_id)
     };
-    let canonical = if has_previous {
-        encode_manifest(&profile, &graph_id, previous_id.as_deref(), &graph)?
+    let requested_package =
+        String::from_utf8(requested_package).map_err(|_| PublicationError::Integrity)?;
+    let requested_package = if requested_package.is_empty() {
+        None
+    } else {
+        validate_package_name(&requested_package)?;
+        Some(requested_package)
+    };
+    let canonical = if has_package {
+        encode_manifest(
+            &profile,
+            &graph_id,
+            previous_id.as_deref(),
+            requested_package.as_deref(),
+            &graph,
+        )?
+    } else if has_previous {
+        let mut parent = PARENT_MANIFEST_PREFIX.to_vec();
+        append_field(&mut parent, profile.as_bytes())?;
+        append_field(&mut parent, graph_id.as_bytes())?;
+        append_field(&mut parent, previous_id.as_deref().unwrap_or("").as_bytes())?;
+        append_field(&mut parent, &graph)?;
+        parent
     } else {
         let mut legacy = LEGACY_MANIFEST_PREFIX.to_vec();
         append_field(&mut legacy, profile.as_bytes())?;
@@ -350,7 +481,28 @@ fn decode_manifest(
     if canonical != bytes {
         return Err(PublicationError::Integrity);
     }
-    Ok((profile, graph_id, previous_id, graph))
+    Ok(DecodedManifest {
+        profile,
+        graph_id,
+        previous_id,
+        requested_package,
+        graph,
+    })
+}
+
+fn validate_package_name(name: &str) -> Result<(), PublicationError> {
+    let bytes = name.as_bytes();
+    if bytes.is_empty()
+        || bytes.len() > 128
+        || !bytes[0].is_ascii_lowercase() && !bytes[0].is_ascii_digit()
+        || !bytes[bytes.len() - 1].is_ascii_lowercase() && !bytes[bytes.len() - 1].is_ascii_digit()
+        || !bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"+.-".contains(byte))
+    {
+        return Err(PublicationError::UnsafePath);
+    }
+    Ok(())
 }
 
 fn append_field(output: &mut Vec<u8>, value: &[u8]) -> Result<(), PublicationError> {
@@ -486,9 +638,31 @@ mod tests {
         append_field(&mut legacy, graph_id.as_bytes()).unwrap();
         append_field(&mut legacy, graph).unwrap();
 
-        assert_eq!(
-            decode_manifest(&legacy).unwrap(),
-            ("default".into(), graph_id, None, graph.to_vec())
-        );
+        let decoded = decode_manifest(&legacy).unwrap();
+        assert_eq!(decoded.profile, "default");
+        assert_eq!(decoded.graph_id, graph_id);
+        assert_eq!(decoded.previous_id, None);
+        assert_eq!(decoded.requested_package, None);
+        assert_eq!(decoded.graph, graph);
+    }
+
+    #[test]
+    fn decodes_v2_generation_without_package_label() {
+        let profile = b"default";
+        let graph_id = "a".repeat(64);
+        let previous_id = "b".repeat(64);
+        let graph = b"v2 canonical graph";
+        let mut v2 = PARENT_MANIFEST_PREFIX.to_vec();
+        append_field(&mut v2, profile).unwrap();
+        append_field(&mut v2, graph_id.as_bytes()).unwrap();
+        append_field(&mut v2, previous_id.as_bytes()).unwrap();
+        append_field(&mut v2, graph).unwrap();
+
+        let decoded = decode_manifest(&v2).unwrap();
+        assert_eq!(decoded.profile, "default");
+        assert_eq!(decoded.graph_id, graph_id);
+        assert_eq!(decoded.previous_id, Some(previous_id));
+        assert_eq!(decoded.requested_package, None);
+        assert_eq!(decoded.graph, graph);
     }
 }

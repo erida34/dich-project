@@ -1725,4 +1725,64 @@ mod tree_tests {
         assert!(db.read_profile_generation("safe").is_err());
         assert!(db.list_profiles().is_err());
     }
+
+    #[test]
+    fn package_profile_remove_is_confirmed_by_api_and_rollback_restores_previous_selection() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let (root, mut db, first_identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &first_identity, &stage, FailurePoint::None).unwrap();
+        let first_id = first_identity.hex();
+        let first_graph = ReferenceGraph::new(&[&first_id], &[]).unwrap();
+        let (first_graph_id, _) = db.put_reference_graph(&first_graph).unwrap();
+        let (first, _) = db
+            .publish_package_profile_generation("default", "libfixture", &first_graph_id)
+            .unwrap();
+
+        let second_identity = identity_from_material(IdentityMaterial {
+            name: "libfixture".into(),
+            version: "2".into(),
+            architecture: "amd64".into(),
+            distribution: "debian".into(),
+            suite: "bookworm".into(),
+            uri: "https://example.org/debian".into(),
+            source_architecture: "amd64".into(),
+            components: vec!["main".into()],
+            fingerprints: vec!["012345".into()],
+            artifact_path: "pool/main/l/libfixture.deb".into(),
+            artifact_size: 42,
+            artifact_sha256: [4; 32],
+            release_sha256: [2; 32],
+            policy: 1,
+        })
+        .unwrap();
+        publish_tree_for_test(&mut db, &second_identity, &stage, FailurePoint::None).unwrap();
+        let second_id = second_identity.hex();
+        let second_graph = ReferenceGraph::new(&[&second_id], &[]).unwrap();
+        let (second_graph_id, _) = db.put_reference_graph(&second_graph).unwrap();
+        let (second, _) = db
+            .publish_package_profile_generation("default", "libfixture", &second_graph_id)
+            .unwrap();
+        assert_eq!(
+            second.previous_id.as_deref(),
+            Some(first.generation_id.as_str())
+        );
+        assert_eq!(second.requested_package.as_deref(), Some("libfixture"));
+
+        assert!(
+            db.remove_package_profile_generation("default", "other-package")
+                .is_err()
+        );
+        assert!(db.read_profile_generation("default").unwrap().is_some());
+        db.remove_package_profile_generation("default", "libfixture")
+            .unwrap();
+        assert!(db.list_profiles().unwrap().is_empty());
+        assert!(
+            db.publish_package_profile_generation("default", "other-package", &second_graph_id)
+                .is_err()
+        );
+        let restored = db.rollback_profile_generation("default").unwrap();
+        assert_eq!(restored, first);
+        assert_eq!(db.list_profiles().unwrap(), vec![first]);
+        assert!(!root.path().join("profiles/default/removed").exists());
+    }
 }

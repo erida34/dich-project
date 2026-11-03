@@ -153,6 +153,22 @@ impl DebianUniverse {
         }
         Ok(Requirement(parsed[0].alternatives().to_vec()))
     }
+    pub fn require_exact(&self, name: &str, version: &str) -> Result<Requirement, UniverseError> {
+        let parsed_version = DebianVersion::parse(version).map_err(|_| UniverseError)?;
+        let expression = format!("{name} (= {version})");
+        let parsed = parse_dependencies(&expression).map_err(|_| UniverseError)?;
+        if parsed.len() != 1 || parsed[0].alternatives().len() != 1 {
+            return Err(UniverseError);
+        }
+        let relation = &parsed[0].alternatives()[0];
+        let exact = relation.version().is_some_and(|constraint| {
+            constraint.operator() == Comparison::Equal && constraint.version() == &parsed_version
+        });
+        if relation.name() != name || !exact {
+            return Err(UniverseError);
+        }
+        Ok(Requirement(vec![relation.clone()]))
+    }
     pub(crate) fn identity(&self, id: usize) -> Option<(String, String)> {
         let c = self.candidates.get(id)?;
         Some((c.name.clone(), c.version.as_str().to_owned()))

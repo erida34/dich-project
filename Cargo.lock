@@ -228,6 +228,7 @@ dependencies = [
  "dich-apt",
  "dich-core",
  "dich-deb",
+ "dich-engine",
  "dich-store",
  "rusqlite",
  "rustix",
@@ -261,6 +262,18 @@ version = "0.1.0"
 dependencies = [
  "goblin",
  "serde",
+]
+
+[[package]]
+name = "dich-engine"
+version = "0.1.0"
+dependencies = [
+ "dich-apt",
+ "dich-core",
+ "dich-deb",
+ "dich-store",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

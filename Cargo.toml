@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/dich-cli", "crates/dich-core", "crates/dich-apt", "crates/dich-deb", "crates/dich-elf", "crates/dich-store"]
+members = ["crates/dich-cli", "crates/dich-core", "crates/dich-apt", "crates/dich-deb", "crates/dich-elf", "crates/dich-store", "crates/dich-engine"]
 
 [workspace.package]
 edition = "2024"

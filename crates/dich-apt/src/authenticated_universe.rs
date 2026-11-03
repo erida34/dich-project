@@ -1,8 +1,8 @@
 //! Load a bounded candidate dataset from one authenticated, policy-matched cache snapshot.
 use crate::artifact::select_indexed_artifacts;
 use crate::{
-    DebianUniverse, FreshnessPolicy, IndexLimits, SnapshotJournal, Source, ValidatedRelease,
-    check_release_policy, choose_index_format, parse_control_stanzas,
+    DebianUniverse, FreshnessPolicy, IndexLimits, Requirement, SnapshotJournal, Source,
+    ValidatedRelease, check_release_policy, choose_index_format, parse_control_stanzas,
 };
 use dich_core::{
     ArchitecturePolicy,
@@ -82,10 +82,10 @@ impl AuthenticatedUniverse {
         journal: &SnapshotJournal,
         freshness: FreshnessPolicy,
         policy: &ArchitecturePolicy,
-        clock: impl Fn() -> SystemTime,
+        clock: impl Fn() -> SystemTime + Copy,
     ) -> Result<Self, UniverseLoadError> {
         let release = journal
-            .load_release_with_clock(source, freshness, &clock)
+            .load_release_with_clock(source, freshness, clock)
             .map_err(|_| UniverseLoadError::Cache)?;
         check_release_policy(policy, &release).map_err(|_| UniverseLoadError::Policy)?;
         let mut stanzas = Vec::new();
@@ -99,7 +99,7 @@ impl AuthenticatedUniverse {
                     component,
                     format,
                     IndexLimits::default(),
-                    &clock,
+                    clock,
                 )
                 .map_err(|_| UniverseLoadError::Cache)?;
             if index_release.release().contents() != release.release().contents() {
@@ -115,7 +115,7 @@ impl AuthenticatedUniverse {
         let universe = DebianUniverse::from_stanzas(&stanzas, source.architecture())
             .map_err(|_| UniverseLoadError::Metadata)?;
         let current = journal
-            .load_release_with_clock(source, freshness, &clock)
+            .load_release_with_clock(source, freshness, clock)
             .map_err(|_| UniverseLoadError::Cache)?;
         if !release.is_valid_at(clock())
             || current.release().contents() != release.release().contents()
@@ -169,17 +169,47 @@ impl AuthenticatedUniverse {
     ) -> Result<MetadataPlan, PlanError> {
         self.plan_with_clock(journal, package, SystemTime::now)
     }
+    /// Produce a plan constrained to one exact Debian version.
+    pub fn plan_exact(
+        &self,
+        journal: &SnapshotJournal,
+        package: &str,
+        version: &str,
+    ) -> Result<MetadataPlan, PlanError> {
+        self.plan_exact_with_clock(journal, package, version, SystemTime::now)
+    }
     pub(crate) fn plan_with_clock(
         &self,
         journal: &SnapshotJournal,
         package: &str,
-        clock: impl Fn() -> SystemTime,
+        clock: impl Fn() -> SystemTime + Copy,
     ) -> Result<MetadataPlan, PlanError> {
-        self.recheck(journal, &clock)?;
         let request = self
             .universe
             .require(package)
             .map_err(|_| PlanError::InvalidRequest)?;
+        self.plan_requirement_with_clock(journal, request, clock)
+    }
+    pub(crate) fn plan_exact_with_clock(
+        &self,
+        journal: &SnapshotJournal,
+        package: &str,
+        version: &str,
+        clock: impl Fn() -> SystemTime + Copy,
+    ) -> Result<MetadataPlan, PlanError> {
+        let request = self
+            .universe
+            .require_exact(package, version)
+            .map_err(|_| PlanError::InvalidRequest)?;
+        self.plan_requirement_with_clock(journal, request, clock)
+    }
+    fn plan_requirement_with_clock(
+        &self,
+        journal: &SnapshotJournal,
+        request: Requirement,
+        clock: impl Fn() -> SystemTime + Copy,
+    ) -> Result<MetadataPlan, PlanError> {
+        self.recheck(journal, &clock)?;
         let result = resolve(&self.universe, vec![request], SearchLimits::default());
         self.recheck(journal, &clock)?;
         let result = result.map_err(|error| match error {
@@ -207,7 +237,7 @@ impl AuthenticatedUniverse {
                     component,
                     format,
                     IndexLimits::default(),
-                    &clock,
+                    clock,
                 )
                 .map_err(|_| PlanError::Cache)?;
             if release.release().contents() != self.release.release().contents() {

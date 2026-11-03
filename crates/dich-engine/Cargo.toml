@@ -1,0 +1,16 @@
+[package]
+name = "dich-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+dich-apt = { path = "../dich-apt" }
+dich-core = { path = "../dich-core" }
+dich-deb = { path = "../dich-deb" }
+dich-store = { path = "../dich-store" }
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

@@ -88,8 +88,8 @@ fn signed_cached_archive_can_publish_a_tree_without_running_scripts() {
         ("postinst", script.as_bytes()),
     ]);
     let data = make_tar(&[("usr/share/fixturetree/data", b"fixture content")]);
-    let mut archive = Vec::new();
-    {
+    let make_deb = |control: Vec<u8>, data: Vec<u8>| {
+        let mut archive = Vec::new();
         let mut builder = ar::Builder::new(&mut archive);
         for (name, body) in [
             ("debian-binary", b"2.0\n".to_vec()),
@@ -99,7 +99,62 @@ fn signed_cached_archive_can_publish_a_tree_without_running_scripts() {
             let header = ar::Header::new(name.as_bytes().to_vec(), body.len() as u64);
             builder.append(&header, body.as_slice()).unwrap();
         }
-    }
+        archive
+    };
+    let archive = make_deb(control, data);
+    let source = dir.path().join("fixture.c");
+    let library_path = dir.path().join("libfixture.so");
+    fs::write(&source, b"int fixture_value(void) { return 7; }\n").unwrap();
+    let compiled = Command::new("cc")
+        .args([
+            "-shared",
+            "-fPIC",
+            "-nostdlib",
+            "-Wl,-soname,libfixture.so",
+            "-o",
+        ])
+        .arg(&library_path)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let library = fs::read(&library_path).unwrap();
+    let library_control = make_tar(&[(
+        "control",
+        b"Package: fixturelib\nVersion: 1.0-1\nArchitecture: amd64\n",
+    )]);
+    let library_data = make_tar(&[("usr/lib/x86_64-linux-gnu/libfixture.so", &library)]);
+    let library_archive = make_deb(library_control, library_data);
+    let library_v2_path = dir.path().join("libfixture-v2.so");
+    fs::write(&source, b"int fixture_value(void) { return 8; }\n").unwrap();
+    let compiled = Command::new("cc")
+        .args([
+            "-shared",
+            "-fPIC",
+            "-nostdlib",
+            "-Wl,-soname,libfixture.so",
+            "-o",
+        ])
+        .arg(&library_v2_path)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let library_v2 = fs::read(&library_v2_path).unwrap();
+    let library_v2_control = make_tar(&[(
+        "control",
+        b"Package: fixturelib\nVersion: 2.0-1\nArchitecture: amd64\n",
+    )]);
+    let library_v2_data = make_tar(&[("usr/lib/x86_64-linux-gnu/libfixture.so", &library_v2)]);
+    let library_v2_archive = make_deb(library_v2_control, library_v2_data);
     let hex = |bytes: &[u8]| {
         Sha256::digest(bytes)
             .iter()
@@ -111,6 +166,14 @@ fn signed_cached_archive_can_publish_a_tree_without_running_scripts() {
         "Package: fixturetree\nVersion: 1.0-1\nArchitecture: amd64\nFilename: pool/main/f/fixturetree/fixturetree_1.0-1_amd64.deb\nSize: {}\nSHA256: {}\n\n",
         archive.len(),
         artifact_hash
+    ) + &format!(
+        "Package: fixturelib\nVersion: 1.0-1\nArchitecture: amd64\nFilename: pool/main/f/fixturelib/fixturelib_1.0-1_amd64.deb\nSize: {}\nSHA256: {}\n\n",
+        library_archive.len(),
+        hex(&library_archive)
+    ) + &format!(
+        "Package: fixturelib\nVersion: 2.0-1\nArchitecture: amd64\nFilename: pool/main/f/fixturelib/fixturelib_2.0-1_amd64.deb\nSize: {}\nSHA256: {}\n\n",
+        library_v2_archive.len(),
+        hex(&library_v2_archive)
     );
     let mut gzip = Command::new("gzip")
         .args(["-n", "-c"])
@@ -166,6 +229,14 @@ fn signed_cached_archive_can_publish_a_tree_without_running_scripts() {
     let blob = cache_dir.join(format!("blob-{artifact_hash}"));
     fs::write(&blob, archive).unwrap();
     fs::set_permissions(blob, fs::Permissions::from_mode(0o600)).unwrap();
+    let library_hash = hex(&library_archive);
+    let library_blob = cache_dir.join(format!("blob-{library_hash}"));
+    fs::write(&library_blob, library_archive).unwrap();
+    fs::set_permissions(library_blob, fs::Permissions::from_mode(0o600)).unwrap();
+    let library_v2_hash = hex(&library_v2_archive);
+    let library_v2_blob = cache_dir.join(format!("blob-{library_v2_hash}"));
+    fs::write(&library_v2_blob, library_v2_archive).unwrap();
+    fs::set_permissions(library_v2_blob, fs::Permissions::from_mode(0o600)).unwrap();
     let fetch = || {
         Command::new(env!("CARGO_BIN_EXE_dich"))
             .args([
@@ -240,6 +311,220 @@ fn signed_cached_archive_can_publish_a_tree_without_running_scripts() {
     assert!(reused.status.success());
     let body: serde_json::Value = serde_json::from_slice(&reused.stdout).unwrap();
     assert_eq!(body["tree"]["publication"], "reused");
+    assert!(!marker.exists());
+
+    let install_args = [
+        "--json",
+        "--config",
+        config.to_str().unwrap(),
+        "--cache",
+        cache_dir.to_str().unwrap(),
+        "--store-dir",
+        store_dir.to_str().unwrap(),
+        "--max-age-seconds",
+        "86400",
+        "--allow-missing-valid-until",
+        "install",
+        "fixturelib",
+        "--exact-version",
+        "1.0-1",
+    ];
+    let planned = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(install_args)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let plan: serde_json::Value = serde_json::from_slice(&planned.stdout).unwrap();
+    assert_eq!(plan["status"], "planned");
+    assert_eq!(plan["exact_version"], "1.0-1");
+    assert_eq!(plan["pins"][0]["version"], "1.0-1");
+    assert_eq!(plan["requires_confirmation"], "--yes");
+    let mut rejected_args = install_args.to_vec();
+    let package_arg = rejected_args
+        .iter()
+        .position(|arg| *arg == "fixturelib")
+        .unwrap();
+    rejected_args[package_arg] = "fixturetree";
+    let rejected = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(rejected_args)
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    let rejected: serde_json::Value = serde_json::from_slice(&rejected.stderr).unwrap();
+    assert_eq!(rejected["error"]["code"], "compatibility_rejected");
+    assert!(!marker.exists());
+    let list = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "profile",
+            "list",
+        ])
+        .output()
+        .unwrap();
+    assert!(list.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&list.stdout).unwrap()["profiles"],
+        serde_json::json!([])
+    );
+
+    let installed = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(install_args)
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let installed: serde_json::Value = serde_json::from_slice(&installed.stdout).unwrap();
+    assert_eq!(installed["status"], "completed");
+    assert_eq!(installed["requested_package"], "fixturelib");
+    assert_eq!(installed["maintainer_scripts_executed"], false);
+    let explicit_path = installed["objects"][0]["explicit_path"].as_str().unwrap();
+    assert_eq!(fs::read(explicit_path).unwrap(), library);
+    let first_generation = installed["generation_id"].as_str().unwrap().to_owned();
+
+    let installed_v2 = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--config",
+            config.to_str().unwrap(),
+            "--cache",
+            cache_dir.to_str().unwrap(),
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "--max-age-seconds",
+            "86400",
+            "--allow-missing-valid-until",
+            "install",
+            "fixturelib",
+            "--exact-version",
+            "2.0-1",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        installed_v2.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed_v2.stderr)
+    );
+    let installed_v2: serde_json::Value = serde_json::from_slice(&installed_v2.stdout).unwrap();
+    assert_eq!(installed_v2["objects"][0]["version"], "2.0-1");
+    let second_generation = installed_v2["generation_id"].as_str().unwrap();
+    assert_ne!(first_generation, second_generation);
+    let explicit_v2_path = installed_v2["objects"][0]["explicit_path"]
+        .as_str()
+        .unwrap();
+    assert_eq!(fs::read(explicit_v2_path).unwrap(), library_v2);
+
+    let rollback_args = [
+        "--json",
+        "--store-dir",
+        store_dir.to_str().unwrap(),
+        "rollback",
+    ];
+    let rollback_plan = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(rollback_args)
+        .output()
+        .unwrap();
+    assert!(rollback_plan.status.success());
+    let rollback_plan: serde_json::Value = serde_json::from_slice(&rollback_plan.stdout).unwrap();
+    assert_eq!(rollback_plan["status"], "planned");
+    assert_eq!(rollback_plan["target_generation"], first_generation);
+    let rollback = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(rollback_args)
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert!(
+        rollback.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rollback.stderr)
+    );
+    let rollback: serde_json::Value = serde_json::from_slice(&rollback.stdout).unwrap();
+    assert_eq!(rollback["generation_id"], first_generation);
+    let active = dich_store::MetadataDb::open_existing(&store_dir).unwrap();
+    assert_eq!(
+        active
+            .read_profile_generation("default")
+            .unwrap()
+            .unwrap()
+            .generation_id,
+        first_generation
+    );
+    drop(active);
+
+    let list = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "profile",
+            "list",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        list.status.success(),
+        "{}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let profiles: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(profiles["profiles"][0]["requested_package"], "fixturelib");
+
+    let remove_args = [
+        "--json",
+        "--store-dir",
+        store_dir.to_str().unwrap(),
+        "remove",
+        "fixturelib",
+    ];
+    let remove_plan = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(remove_args)
+        .output()
+        .unwrap();
+    assert!(remove_plan.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&remove_plan.stdout).unwrap()["status"],
+        "planned"
+    );
+    let removed = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(remove_args)
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&removed.stdout).unwrap()["objects_retained"],
+        true
+    );
+    let list = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "profile",
+            "list",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&list.stdout).unwrap()["profiles"],
+        serde_json::json!([])
+    );
     assert!(!marker.exists());
 }
 
@@ -715,11 +1000,8 @@ fn mutation_commands_fail_closed_without_running_input() {
     let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
     let marker = dir.path().join("should-not-exist");
     let payload = format!("$(touch {})", marker.display());
-    for args in [
-        vec!["install", payload.as_str()],
-        vec!["remove", payload.as_str()],
-        vec!["gc", "--execute"],
-    ] {
+    {
+        let args = ["gc", "--execute"];
         let output = Command::new(env!("CARGO_BIN_EXE_dich"))
             .arg("--json")
             .args(args)
@@ -731,16 +1013,27 @@ fn mutation_commands_fail_closed_without_running_input() {
         assert_eq!(body["error"]["code"], "unsupported");
         assert!(!marker.exists());
     }
-    let store_dir = dir.path().join("store");
-    let output = Command::new(env!("CARGO_BIN_EXE_dich"))
-        .args(["--json", "--store-dir"])
-        .arg(&store_dir)
-        .args(["rollback", "--profile", payload.as_str()])
+    let install = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(["--json", "--max-age-seconds", "60", "install"])
+        .arg(&payload)
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    let body: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert!(!install.status.success());
+    assert!(install.stdout.is_empty());
+    assert!(!marker.exists());
+    let install_error: serde_json::Value = serde_json::from_slice(&install.stderr).unwrap();
+    assert_eq!(install_error["error"]["code"], "source_load_failed");
+
+    let store_dir = dir.path().join("store");
+    let remove = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(["--json", "--store-dir"])
+        .arg(&store_dir)
+        .args(["remove", payload.as_str()])
+        .output()
+        .unwrap();
+    assert!(!remove.status.success());
+    assert!(remove.stdout.is_empty());
+    let body: serde_json::Value = serde_json::from_slice(&remove.stderr).unwrap();
     assert_eq!(body["error"]["code"], "store_open_failed");
     assert!(!marker.exists());
 }

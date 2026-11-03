@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Dich command-line interface; package installation remains unsupported.
+//! Dich command-line interface; package orchestration lives in `dich-engine`.
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -78,17 +78,26 @@ pub enum Commands {
         #[arg(long = "with", value_name = "DEB", action = clap::ArgAction::Append)]
         with: Vec<String>,
     },
-    /// Install compatible packages into a profile (planned)
+    /// Plan or install an authenticated, supported DSO closure into a profile
     Install {
         package: String,
         #[arg(long, default_value = "default")]
         profile: String,
+        /// Optional exact Debian version
+        #[arg(long)]
+        exact_version: Option<String>,
+        /// Confirm fetching, extraction and profile selection
+        #[arg(long)]
+        yes: bool,
     },
-    /// Remove a package from profile (planned)
+    /// Plan or deactivate a package profile generation
     Remove {
         package: String,
         #[arg(long, default_value = "default")]
         profile: String,
+        /// Confirm the atomic profile pointer change
+        #[arg(long)]
+        yes: bool,
     },
     /// Plan or switch a profile to its previous generation
     Rollback {
@@ -168,10 +177,7 @@ impl CliError {
 }
 
 pub fn run(cli: Cli) -> Result<(), CliError> {
-    if matches!(
-        &cli.command,
-        Commands::Install { .. } | Commands::Remove { .. } | Commands::Gc { .. }
-    ) {
+    if matches!(&cli.command, Commands::Gc { .. }) {
         dich_core::admission::admit_execution(dich_core::admission::Evidence::Unexamined).map_err(
             |_| CliError {
                 code: "unsupported",
@@ -641,6 +647,180 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 })
             }
         }
+        Commands::Install {
+            package,
+            profile,
+            exact_version,
+            yes,
+        } => {
+            #[cfg(target_os = "linux")]
+            {
+                let age = cli.max_age_seconds.ok_or(CliError {
+                    code: "freshness_policy_required",
+                    message: "specify --max-age-seconds explicitly",
+                    trace: Vec::new(),
+                })?;
+                let freshness = dich_engine::freshness_policy(age, cli.allow_missing_valid_until)
+                    .map_err(|_| CliError {
+                    code: "invalid_freshness_policy",
+                    message: "invalid metadata freshness policy",
+                    trace: Vec::new(),
+                })?;
+                let sources =
+                    dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
+                        code: "source_load_failed",
+                        message: "could not load trusted source configuration",
+                        trace: Vec::new(),
+                    })?;
+                if sources.len() != 1 {
+                    return Err(CliError {
+                        code: "unsupported_sources",
+                        message: "install currently requires exactly one configured source",
+                        trace: Vec::new(),
+                    });
+                }
+                let journal =
+                    dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
+                        code: "cache_open_failed",
+                        message: "could not open protected cache directory",
+                        trace: Vec::new(),
+                    })?;
+                let plan = dich_engine::plan_install(
+                    &sources[0],
+                    &journal,
+                    freshness,
+                    &package,
+                    exact_version.as_deref(),
+                )
+                .map_err(map_install_error)?;
+                if !yes {
+                    if cli.json {
+                        let pins: Vec<_> = plan
+                            .pins
+                            .iter()
+                            .map(|pin| {
+                                serde_json::json!({
+                                    "name":pin.name,
+                                    "version":pin.version,
+                                    "architecture":pin.architecture,
+                                    "component":pin.component,
+                                    "artifact_sha256":pin.artifact_sha256,
+                                    "release_sha256":pin.release_sha256
+                                })
+                            })
+                            .collect();
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "schema_version":1,
+                                "status":"planned",
+                                "scope":"metadata_only_not_installable_until_compatibility_check",
+                                "package":package,
+                                "exact_version":exact_version,
+                                "profile":profile,
+                                "packages":plan.packages,
+                                "pins":pins,
+                                "requires_confirmation":"--yes"
+                            })
+                        );
+                    } else {
+                        println!(
+                            "planned: authenticated metadata selected {} package(s); compatibility and extraction require --yes",
+                            plan.pins.len()
+                        );
+                        for pin in plan.pins {
+                            println!(
+                                "{}={} {} {}",
+                                pin.name, pin.version, pin.architecture, pin.artifact_sha256
+                            );
+                        }
+                    }
+                    return Ok(());
+                }
+                let proxy = cli
+                    .https_proxy
+                    .as_deref()
+                    .map(dich_apt::HttpConnectProxy::parse)
+                    .transpose()
+                    .map_err(|_| CliError {
+                        code: "invalid_proxy",
+                        message: "proxy must be an unauthenticated http://host:port URL",
+                        trace: Vec::new(),
+                    })?;
+                let report = dich_engine::install_dso_profile(
+                    &sources[0],
+                    &journal,
+                    freshness,
+                    dich_engine::InstallRequest {
+                        package: &package,
+                        exact_version: exact_version.as_deref(),
+                        profile: &profile,
+                        store_dir: &cli.store_dir,
+                        proxy: proxy.as_ref(),
+                    },
+                )
+                .map_err(map_install_error)?;
+                let objects: Vec<_> = report
+                    .objects
+                    .iter()
+                    .map(|object| {
+                        serde_json::json!({
+                            "package":object.package,
+                            "version":object.version,
+                            "object_id":object.id,
+                            "explicit_path":object.path,
+                            "publication":match object.tree_outcome {
+                                dich_store::TreeOutcome::Published => "published",
+                                dich_store::TreeOutcome::Reused => "reused"
+                            }
+                        })
+                    })
+                    .collect();
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "schema_version":1,
+                            "status":"completed",
+                            "scope":"authenticated_dso_profile_selection",
+                            "profile":profile,
+                            "requested_package":package,
+                            "generation_id":report.generation.generation_id,
+                            "runtime_activation":"caller_must_load_explicit_paths_in_dlmopen_namespace",
+                            "load_order":report.compatibility.load_order,
+                            "objects":objects,
+                            "maintainer_scripts_executed":false
+                        })
+                    );
+                } else {
+                    println!(
+                        "completed: selected authenticated DSO closure in profile {profile} (generation {})",
+                        report.generation.generation_id
+                    );
+                    println!(
+                        "runtime activation requires explicit paths in a fresh glibc dlmopen namespace"
+                    );
+                    for object in report.objects {
+                        println!(
+                            "{}={} {}",
+                            object.package,
+                            object.version,
+                            object.path.display()
+                        );
+                    }
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (package, profile, exact_version, yes);
+                Err(CliError {
+                    code: "unsupported_platform",
+                    message: "authenticated profile install requires Linux",
+                    trace: Vec::new(),
+                })
+            }
+        }
         Commands::Inspect { file, with } => {
             #[cfg(target_os = "linux")]
             {
@@ -743,6 +923,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         .map(|profile| {
                             serde_json::json!({
                                 "name": profile.profile,
+                                "requested_package": profile.requested_package,
                                 "generation_id": profile.generation_id,
                                 "graph_id": profile.graph_id,
                                 "object_count": profile.graph.nodes().len(),
@@ -860,6 +1041,99 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 Err(CliError {
                     code: "unsupported_platform",
                     message: "profile rollback requires Linux",
+                    trace: Vec::new(),
+                })
+            }
+        }
+        Commands::Remove {
+            package,
+            profile,
+            yes,
+        } => {
+            #[cfg(target_os = "linux")]
+            {
+                let mut db =
+                    dich_store::MetadataDb::open_existing(&cli.store_dir).map_err(|_| {
+                        CliError {
+                            code: "store_open_failed",
+                            message: "could not open existing protected store with current schema",
+                            trace: Vec::new(),
+                        }
+                    })?;
+                let current = db
+                    .read_profile_generation(&profile)
+                    .map_err(|_| CliError {
+                        code: "profile_read_failed",
+                        message: "could not validate current profile generation",
+                        trace: Vec::new(),
+                    })?
+                    .ok_or(CliError {
+                        code: "profile_missing",
+                        message: "profile has no active generation",
+                        trace: Vec::new(),
+                    })?;
+                if current.requested_package.as_deref() != Some(package.as_str()) {
+                    return Err(CliError {
+                        code: "package_not_installed",
+                        message: "profile does not select this requested package",
+                        trace: Vec::new(),
+                    });
+                }
+                if !yes {
+                    if cli.json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "schema_version":1,
+                                "status":"planned",
+                                "action":"deactivate_profile_generation",
+                                "profile":profile,
+                                "package":package,
+                                "generation_id":current.generation_id,
+                                "requires_confirmation":"--yes",
+                                "rollback_generation":current.previous_id
+                            })
+                        );
+                    } else {
+                        println!(
+                            "planned: remove {package} from profile {profile}; rerun with --yes to deactivate the selected generation"
+                        );
+                    }
+                    return Ok(());
+                }
+                let removed = db
+                    .remove_package_profile_generation(&profile, &package)
+                    .map_err(|_| CliError {
+                        code: "remove_failed",
+                        message: "could not atomically deactivate the selected profile generation",
+                        trace: Vec::new(),
+                    })?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "schema_version":1,
+                            "status":"completed",
+                            "scope":"profile_metadata_only",
+                            "profile":profile,
+                            "package":package,
+                            "generation_id":removed.generation_id,
+                            "objects_retained":true
+                        })
+                    );
+                } else {
+                    println!(
+                        "completed: deactivated {package} in profile {profile}; store objects retained"
+                    );
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (package, profile, yes);
+                Err(CliError {
+                    code: "unsupported_platform",
+                    message: "profile removal requires Linux",
                     trace: Vec::new(),
                 })
             }
@@ -993,6 +1267,62 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
             message: "not implemented: this operation is not supported",
             trace: Vec::new(),
         }),
+    }
+}
+
+fn map_install_error(error: dich_engine::EngineError) -> CliError {
+    match error {
+        dich_engine::EngineError::Plan(dich_apt::PlanError::Unsupported(trace)) => CliError {
+            code: "unsupported",
+            message: "dependency semantics or system packages are outside the supported subset",
+            trace,
+        },
+        dich_engine::EngineError::Plan(dich_apt::PlanError::Unsatisfiable(trace)) => CliError {
+            code: "unsatisfiable",
+            message: "no matching dependency solution",
+            trace,
+        },
+        dich_engine::EngineError::Plan(dich_apt::PlanError::Limit) => CliError {
+            code: "search_limit",
+            message: "dependency search or closure limit exceeded",
+            trace: Vec::new(),
+        },
+        dich_engine::EngineError::Plan(dich_apt::PlanError::InvalidRequest) => CliError {
+            code: "invalid_arguments",
+            message: "invalid package name",
+            trace: Vec::new(),
+        },
+        dich_engine::EngineError::Plan(dich_apt::PlanError::Cache)
+        | dich_engine::EngineError::Fetch => CliError {
+            code: "install_input_failed",
+            message: "authenticated metadata or artifact fetch failed",
+            trace: Vec::new(),
+        },
+        dich_engine::EngineError::UnsupportedClosure(trace) => CliError {
+            code: "compatibility_rejected",
+            message: "package set is outside the supported DSO closure policy",
+            trace,
+        },
+        dich_engine::EngineError::ProfileConflict => CliError {
+            code: "profile_conflict",
+            message: "profile already selects a different requested package",
+            trace: Vec::new(),
+        },
+        dich_engine::EngineError::ArtifactLimit => CliError {
+            code: "install_limit",
+            message: "artifact or DSO closure limit exceeded",
+            trace: Vec::new(),
+        },
+        dich_engine::EngineError::Inspection => CliError {
+            code: "inspection_failed",
+            message: "package inspection or architecture policy validation failed",
+            trace: Vec::new(),
+        },
+        dich_engine::EngineError::Store(_) => CliError {
+            code: "store_publish_failed",
+            message: "could not safely publish or select the verified package closure",
+            trace: Vec::new(),
+        },
     }
 }
 

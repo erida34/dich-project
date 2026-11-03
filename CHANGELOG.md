@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+- Added authenticated, confirmation-gated profile selection for the narrow signed x86-64 glibc DSO closure; scripts, triggers, unsupported ELF and unverified local inputs remain rejected. Output provides explicit object paths; Dich does not load the code or change host loader state.
+- Added package-labelled v3 profile manifests, metadata-only `remove` with a retained inactive pointer, and rollback to a retained prior generation; objects remain stored and GC is not implemented.
+- Added `install --exact-version` for selecting a specific authenticated Debian version; signed two-version fixtures verify profile generation switching and CLI rollback.
+- Added `dich-engine` as the package orchestration boundary; the CLI remains responsible for argument validation and output, while apt/deb/store crates own trust, compatibility and publication checks.
 - Added bounded byte-level ELF inventory for interpreter, SONAME, NEEDED libraries, search paths, direct dynamic-loading imports and required symbol versions; it does not approve compatibility.
 - `dich-deb` inspection now reports heuristic path and text indicators for package configuration, services, pkg-config/CMake, NSS/locale, shebangs, absolute path tokens and selected host commands; compatibility analysis remains incomplete.
 - `.deb` inspection now associates bounded ELF evidence with archive file paths, including loader, dependency, search-path and symbol-version facts.
