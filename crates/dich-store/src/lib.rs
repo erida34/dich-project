@@ -2,6 +2,8 @@
 //! Store identity and future durable storage.
 
 #[cfg(target_os = "linux")]
+mod gc;
+#[cfg(target_os = "linux")]
 mod graph;
 #[cfg(target_os = "linux")]
 mod inspect;
@@ -15,6 +17,8 @@ mod publication;
 mod recovery;
 #[cfg(target_os = "linux")]
 mod tree;
+#[cfg(target_os = "linux")]
+pub use gc::{GcMode, GcReport, GcRootsReport, UnreachableGraph, UnreachableTree};
 #[cfg(target_os = "linux")]
 pub use graph::GraphOutcome;
 #[cfg(target_os = "linux")]
@@ -2035,5 +2039,240 @@ mod tree_tests {
         // Once released, second handle can open and see the committed state
         let second = MetadataDb::open(root.path()).unwrap();
         assert_eq!(second.list_profiles().unwrap(), vec![generation]);
+    }
+
+    fn make_test_tree(name: &str, version: &str) -> (StoreIdentity, FixtureTree) {
+        let stage = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+        std::fs::create_dir(stage.path().join("usr")).unwrap();
+        let content = format!("content-for-{name}-{version}");
+        std::fs::write(stage.path().join("usr/file"), content.as_bytes()).unwrap();
+        let file_hash = Sha256::digest(content.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let stage = FixtureTree {
+            root: stage,
+            directories: vec!["usr".into()],
+            files: vec![dich_deb::StagedFile {
+                path: "usr/file".into(),
+                size: content.len() as u64,
+                sha256: file_hash,
+            }],
+        };
+        let mut artifact_sha256 = [0u8; 32];
+        let name_bytes = name.as_bytes();
+        let copy_len = name_bytes.len().min(32);
+        artifact_sha256[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
+        let mut release_sha256 = [0u8; 32];
+        let ver_bytes = version.as_bytes();
+        let copy_ver = ver_bytes.len().min(32);
+        release_sha256[..copy_ver].copy_from_slice(&ver_bytes[..copy_ver]);
+        let material = IdentityMaterial {
+            name: name.into(),
+            version: version.into(),
+            architecture: "amd64".into(),
+            distribution: "debian".into(),
+            suite: "bookworm".into(),
+            uri: "https://example.org/debian".into(),
+            source_architecture: "amd64".into(),
+            components: vec!["main".into()],
+            fingerprints: vec!["012345".into()],
+            artifact_path: format!("pool/main/{}/{}_{}.deb", &name[0..1], name, version),
+            artifact_size: 42,
+            artifact_sha256,
+            release_sha256,
+            policy: 1,
+        };
+        (identity_from_material(material).unwrap(), stage)
+    }
+
+    #[test]
+    fn gc_roots_track_active_profiles_and_rollback_chains() {
+        use crate::GcMode;
+        use dich_core::reference_graph::ReferenceGraph;
+
+        let (root, mut db, _, _) = fixture();
+        let (id_common, s_common) = make_test_tree("libcommon", "1");
+        publish_tree_for_test(&mut db, &id_common, &s_common, FailurePoint::None).unwrap();
+
+        let (id_v1, s_v1) = make_test_tree("plugin", "1");
+        publish_tree_for_test(&mut db, &id_v1, &s_v1, FailurePoint::None).unwrap();
+
+        let graph1 =
+            ReferenceGraph::new(&[&id_v1.hex()], &[(&id_v1.hex(), &id_common.hex())]).unwrap();
+        let (g1_id, _) = db.put_reference_graph(&graph1).unwrap();
+        db.publish_package_profile_generation("default", "plugin", &g1_id)
+            .unwrap();
+
+        let (id_v2, s_v2) = make_test_tree("plugin", "2");
+        publish_tree_for_test(&mut db, &id_v2, &s_v2, FailurePoint::None).unwrap();
+
+        let graph2 =
+            ReferenceGraph::new(&[&id_v2.hex()], &[(&id_v2.hex(), &id_common.hex())]).unwrap();
+        let (g2_id, _) = db.put_reference_graph(&graph2).unwrap();
+        db.publish_package_profile_generation("default", "plugin", &g2_id)
+            .unwrap();
+
+        // Publish unreferenced orphan tree & graph
+        let (id_orphan, s_orphan) = make_test_tree("unrelated", "1");
+        publish_tree_for_test(&mut db, &id_orphan, &s_orphan, FailurePoint::None).unwrap();
+        let graph3 = ReferenceGraph::new(&[&id_orphan.hex()], &[]).unwrap();
+        let (g3_id, _) = db.put_reference_graph(&graph3).unwrap();
+
+        // Check roots
+        let roots = db.collect_roots().unwrap();
+        assert_eq!(roots.active_profiles, vec!["default"]);
+        assert!(roots.reachable_trees.contains(&id_common.hex()));
+        assert!(roots.reachable_trees.contains(&id_v2.hex())); // current
+        assert!(roots.reachable_trees.contains(&id_v1.hex())); // previous rollback target
+        assert!(!roots.reachable_trees.contains(&id_orphan.hex()));
+        assert!(roots.reachable_graphs.contains(&g1_id));
+        assert!(roots.reachable_graphs.contains(&g2_id));
+        assert!(!roots.reachable_graphs.contains(&g3_id));
+
+        // Dry-run GC
+        let dry_report = db.collect_garbage(GcMode::DryRun).unwrap();
+        assert_eq!(dry_report.mode, GcMode::DryRun);
+        assert_eq!(dry_report.unreachable_trees.len(), 1);
+        assert_eq!(dry_report.unreachable_trees[0].object_id, id_orphan.hex());
+        assert_eq!(dry_report.unreachable_graphs.len(), 1);
+        assert_eq!(dry_report.unreachable_graphs[0].graph_id, g3_id);
+        assert_eq!(dry_report.reclaimed_bytes, 0);
+        assert!(dry_report.reclaimable_bytes > 0);
+        assert_eq!(dry_report.retained_trees, 3);
+        assert_eq!(dry_report.retained_graphs, 2);
+
+        // Filesystem check: orphan tree must still exist after dry-run
+        let orphan_path = root
+            .path()
+            .join(format!("objects/{}.tree", id_orphan.hex()));
+        assert!(orphan_path.exists());
+
+        // Execute GC
+        let exec_report = db.collect_garbage(GcMode::Execute).unwrap();
+        assert_eq!(exec_report.mode, GcMode::Execute);
+        assert_eq!(exec_report.reclaimed_bytes, dry_report.reclaimable_bytes);
+        assert_eq!(exec_report.retained_trees, 3);
+        assert_eq!(exec_report.retained_graphs, 2);
+
+        // Orphan must now be deleted from disk and SQLite
+        assert!(!orphan_path.exists());
+        let orphan_count: i64 = db
+            .connection
+            .query_row(
+                "SELECT count(*) FROM verified_trees WHERE object_id = ?1",
+                [&id_orphan.hex()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphan_count, 0);
+
+        // Retained trees must still exist on disk
+        assert!(
+            root.path()
+                .join(format!("objects/{}.tree", id_common.hex()))
+                .exists()
+        );
+        assert!(
+            root.path()
+                .join(format!("objects/{}.tree", id_v1.hex()))
+                .exists()
+        );
+        assert!(
+            root.path()
+                .join(format!("objects/{}.tree", id_v2.hex()))
+                .exists()
+        );
+
+        // Rollback to v1 succeeds because rollback target was preserved
+        let rolled_back = db.rollback_profile_generation("default").unwrap();
+        assert_eq!(rolled_back.graph_id, g1_id);
+    }
+
+    #[test]
+    fn gc_deactivated_profile_objects_swept_unless_shared() {
+        use crate::GcMode;
+        use dich_core::reference_graph::ReferenceGraph;
+
+        let (root, mut db, _, _) = fixture();
+        let (id_common, s_common) = make_test_tree("libcommon", "1");
+        publish_tree_for_test(&mut db, &id_common, &s_common, FailurePoint::None).unwrap();
+
+        let (id_a, s_a) = make_test_tree("pkg-a", "1");
+        publish_tree_for_test(&mut db, &id_a, &s_a, FailurePoint::None).unwrap();
+        let graph_a =
+            ReferenceGraph::new(&[&id_a.hex()], &[(&id_a.hex(), &id_common.hex())]).unwrap();
+        let (ga_id, _) = db.put_reference_graph(&graph_a).unwrap();
+        db.publish_package_profile_generation("profile-a", "pkg-a", &ga_id)
+            .unwrap();
+
+        let (id_b, s_b) = make_test_tree("pkg-b", "1");
+        publish_tree_for_test(&mut db, &id_b, &s_b, FailurePoint::None).unwrap();
+        let graph_b =
+            ReferenceGraph::new(&[&id_b.hex()], &[(&id_b.hex(), &id_common.hex())]).unwrap();
+        let (gb_id, _) = db.put_reference_graph(&graph_b).unwrap();
+        db.publish_package_profile_generation("profile-b", "pkg-b", &gb_id)
+            .unwrap();
+
+        // Remove profile-b
+        db.remove_package_profile_generation("profile-b", "pkg-b")
+            .unwrap();
+
+        // Run GC execute
+        let report = db.collect_garbage(GcMode::Execute).unwrap();
+        assert_eq!(report.unreachable_trees.len(), 1);
+        assert_eq!(report.unreachable_trees[0].object_id, id_b.hex());
+        assert_eq!(report.unreachable_graphs.len(), 1);
+        assert_eq!(report.unreachable_graphs[0].graph_id, gb_id);
+
+        // pkg-b is deleted
+        assert!(
+            !root
+                .path()
+                .join(format!("objects/{}.tree", id_b.hex()))
+                .exists()
+        );
+
+        // libcommon is PRESERVED because profile-a still references it
+        assert!(
+            root.path()
+                .join(format!("objects/{}.tree", id_common.hex()))
+                .exists()
+        );
+        // pkg-a is PRESERVED
+        assert!(
+            root.path()
+                .join(format!("objects/{}.tree", id_a.hex()))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn gc_pins_preserve_unreferenced_objects() {
+        use crate::GcMode;
+
+        let (root, mut db, _, _) = fixture();
+        let (id_pinned, s_pinned) = make_test_tree("pinned-pkg", "1");
+        publish_tree_for_test(&mut db, &id_pinned, &s_pinned, FailurePoint::None).unwrap();
+
+        // Without pin, it is unreachable
+        let roots = db.collect_roots().unwrap();
+        assert!(!roots.reachable_trees.contains(&id_pinned.hex()));
+
+        // Create pin
+        let pins_dir = root.path().join("pins");
+        std::fs::create_dir(&pins_dir).unwrap();
+        std::fs::set_permissions(&pins_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let pin_file = pins_dir.join(id_pinned.hex());
+        std::fs::write(&pin_file, b"pin-marker").unwrap();
+
+        // With pin, it is marked reachable!
+        let roots_after = db.collect_roots().unwrap();
+        assert!(roots_after.reachable_trees.contains(&id_pinned.hex()));
+
+        // GC DryRun reports 0 unreachable trees
+        let report = db.collect_garbage(GcMode::DryRun).unwrap();
+        assert_eq!(report.unreachable_trees.len(), 0);
+        assert_eq!(report.reclaimable_bytes, 0);
     }
 }

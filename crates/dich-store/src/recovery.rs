@@ -253,6 +253,21 @@ pub enum OrphanKind {
     Archive,
     Tree,
 }
+pub(crate) fn delete_tree_object(objects: &OwnedFd, id: &str) -> Result<(), PublicationError> {
+    if !valid_hex(id, 64) {
+        return Err(PublicationError::UnsafePath);
+    }
+    let name = format!("{id}.tree");
+    let fd = open_child(objects, &name, true)?;
+    let device = fs::fstat(objects).map_err(|_| PublicationError::Io)?.st_dev;
+    check_entry(&fd, true, device)?;
+    visit(&fd, device, 0, &mut 35_000, false)?;
+    visit(&fd, device, 0, &mut 35_000, true)?;
+    fs::unlinkat(objects, name.as_str(), AtFlags::REMOVEDIR).map_err(|_| PublicationError::Io)?;
+    fs::fsync(objects).map_err(|_| PublicationError::Io)?;
+    Ok(())
+}
+
 impl MetadataDb {
     /// Remove one unreferenced object. The lock protects the metadata check and removal, including graph memberships.
     /// This is not garbage collection; future reference types must be checked before extending it.
@@ -268,27 +283,19 @@ impl MetadataDb {
         }
         let objects = private_dir(&self.root, "objects")?;
         let tree = matches!(kind, OrphanKind::Tree);
-        let name = format!("{id}.{}", if tree { "tree" } else { "deb" });
-        let fd = open_child(&objects, &name, tree)?;
-        let device = fs::fstat(&objects)
-            .map_err(|_| PublicationError::Io)?
-            .st_dev;
-        check_entry(&fd, tree, device)?;
         if tree {
-            visit(&fd, device, 0, &mut 35_000, false)?;
-            visit(&fd, device, 0, &mut 35_000, true)?;
+            delete_tree_object(&objects, id)?;
+        } else {
+            let name = format!("{id}.deb");
+            let fd = open_child(&objects, &name, false)?;
+            let device = fs::fstat(&objects)
+                .map_err(|_| PublicationError::Io)?
+                .st_dev;
+            check_entry(&fd, false, device)?;
+            fs::unlinkat(&objects, name.as_str(), AtFlags::empty())
+                .map_err(|_| PublicationError::Io)?;
+            fs::fsync(&objects).map_err(|_| PublicationError::Io)?;
         }
-        fs::unlinkat(
-            &objects,
-            name.as_str(),
-            if tree {
-                AtFlags::REMOVEDIR
-            } else {
-                AtFlags::empty()
-            },
-        )
-        .map_err(|_| PublicationError::Io)?;
-        fs::fsync(&objects).map_err(|_| PublicationError::Io)?;
         Ok(())
     }
 }

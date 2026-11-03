@@ -768,6 +768,323 @@ fn signed_cached_archive_can_publish_a_tree_without_running_scripts() {
         .unwrap();
     assert!(remove_plugin.status.success());
     assert!(!marker.exists());
+
+    // --- Phase 5 GC Smoke Test: A/B variants, dependency dedup, remove one, GC preserves shared library, rollback ---
+
+    // 1. Install Variant A (dich-plugin 1.0) into profile-a
+    let install_a = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--config",
+            config.to_str().unwrap(),
+            "--cache",
+            cache_dir.to_str().unwrap(),
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "--max-age-seconds",
+            "86400",
+            "--allow-missing-valid-until",
+            "install",
+            "dich-plugin",
+            "--profile",
+            "profile-a",
+            "--exact-version",
+            "1.0-1",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        install_a.status.success(),
+        "{}",
+        String::from_utf8_lossy(&install_a.stderr)
+    );
+    let installed_a: serde_json::Value = serde_json::from_slice(&install_a.stdout).unwrap();
+    let obj_a = installed_a["objects"].as_array().unwrap();
+    let common_in_a = obj_a
+        .iter()
+        .find(|o| o["package"] == "libdich-common")
+        .unwrap();
+    let plugin_in_a = obj_a
+        .iter()
+        .find(|o| o["package"] == "dich-plugin")
+        .unwrap();
+    assert_eq!(common_in_a["publication"], "reused");
+    assert_eq!(common_in_a["object_id"], common_obj["object_id"]);
+
+    // 2. Install Variant B (dich-plugin 2.0) into profile-b
+    let install_b = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--config",
+            config.to_str().unwrap(),
+            "--cache",
+            cache_dir.to_str().unwrap(),
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "--max-age-seconds",
+            "86400",
+            "--allow-missing-valid-until",
+            "install",
+            "dich-plugin",
+            "--profile",
+            "profile-b",
+            "--exact-version",
+            "2.0-1",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        install_b.status.success(),
+        "{}",
+        String::from_utf8_lossy(&install_b.stderr)
+    );
+    let installed_b: serde_json::Value = serde_json::from_slice(&install_b.stdout).unwrap();
+    let obj_b = installed_b["objects"].as_array().unwrap();
+    let common_in_b = obj_b
+        .iter()
+        .find(|o| o["package"] == "libdich-common")
+        .unwrap();
+    let plugin_in_b = obj_b
+        .iter()
+        .find(|o| o["package"] == "dich-plugin")
+        .unwrap();
+    assert_eq!(common_in_b["publication"], "reused");
+    assert_eq!(common_in_b["object_id"], common_obj["object_id"]);
+
+    // Verify both variants execute cleanly via dlmopen
+    let check_a = Command::new(checker)
+        .arg(common_in_a["explicit_path"].as_str().unwrap())
+        .arg(plugin_in_a["explicit_path"].as_str().unwrap())
+        .arg("43")
+        .status()
+        .unwrap();
+    assert!(check_a.success(), "profile-a runtime failed");
+
+    let check_b = Command::new(checker)
+        .arg(common_in_b["explicit_path"].as_str().unwrap())
+        .arg(plugin_in_b["explicit_path"].as_str().unwrap())
+        .arg("44")
+        .status()
+        .unwrap();
+    assert!(check_b.success(), "profile-b runtime failed");
+
+    // 3. Remove Variant B (profile-b)
+    let remove_b = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "remove",
+            "dich-plugin",
+            "--profile",
+            "profile-b",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(remove_b.status.success());
+
+    // 4. Test GC dry-run
+    let gc_dry = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "gc",
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(gc_dry.status.success());
+    let dry_json: serde_json::Value = serde_json::from_slice(&gc_dry.stdout).unwrap();
+    assert_eq!(dry_json["status"], "planned");
+    assert_eq!(dry_json["mode"], "dry-run");
+    let unreach_trees = dry_json["unreachable"]["trees"].as_array().unwrap();
+    assert!(
+        unreach_trees
+            .iter()
+            .any(|t| t["object_id"] == plugin_in_b["object_id"].as_str().unwrap()),
+        "unreachable plugin-b must be detected"
+    );
+    assert!(
+        !unreach_trees
+            .iter()
+            .any(|t| t["object_id"] == plugin_in_a["object_id"].as_str().unwrap()),
+        "active plugin-a must NOT be unreachable"
+    );
+    assert!(
+        !unreach_trees
+            .iter()
+            .any(|t| t["object_id"] == common_in_a["object_id"].as_str().unwrap()),
+        "shared common library must NOT be unreachable"
+    );
+    assert!(dry_json["summary"]["reclaimable_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(dry_json["summary"]["reclaimed_bytes"].as_u64().unwrap(), 0);
+
+    // Human-readable dry-run output diagnostics
+    let gc_human = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(["--store-dir", store_dir.to_str().unwrap(), "gc"])
+        .output()
+        .unwrap();
+    assert!(gc_human.status.success());
+    let human_out = String::from_utf8_lossy(&gc_human.stdout);
+    assert!(human_out.contains("Garbage collection (dry-run):"));
+    assert!(human_out.contains("Active profiles: profile-a"));
+    assert!(human_out.contains("Reclaimable space:"));
+
+    // Verify plugin-b tree still exists on disk before execute
+    let plugin_b_tree = store_dir.join(format!(
+        "objects/{}.tree",
+        plugin_in_b["object_id"].as_str().unwrap()
+    ));
+    assert!(plugin_b_tree.exists());
+
+    // 5. Test GC execute
+    let gc_exec = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "gc",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+    assert!(gc_exec.status.success());
+    let exec_json: serde_json::Value = serde_json::from_slice(&gc_exec.stdout).unwrap();
+    assert_eq!(exec_json["status"], "completed");
+    assert_eq!(exec_json["mode"], "execute");
+    assert_eq!(
+        exec_json["summary"]["reclaimed_bytes"],
+        dry_json["summary"]["reclaimable_bytes"]
+    );
+
+    // Verify plugin-b tree is deleted from disk, but shared libdich-common and profile-a's plugin are preserved!
+    assert!(
+        !plugin_b_tree.exists(),
+        "unreachable plugin-b tree should be deleted"
+    );
+    let common_tree = store_dir.join(format!(
+        "objects/{}.tree",
+        common_in_a["object_id"].as_str().unwrap()
+    ));
+    let plugin_a_tree = store_dir.join(format!(
+        "objects/{}.tree",
+        plugin_in_a["object_id"].as_str().unwrap()
+    ));
+    assert!(
+        common_tree.exists(),
+        "shared libdich-common tree must be preserved"
+    );
+    assert!(
+        plugin_a_tree.exists(),
+        "active profile-a plugin tree must be preserved"
+    );
+
+    // 6. Verify profile-a runtime check still succeeds (preserves shared library!)
+    let check_a_after_gc = Command::new(checker)
+        .arg(common_in_a["explicit_path"].as_str().unwrap())
+        .arg(plugin_in_a["explicit_path"].as_str().unwrap())
+        .arg("43")
+        .status()
+        .unwrap();
+    assert!(
+        check_a_after_gc.success(),
+        "runtime check on profile-a failed after GC sweep"
+    );
+
+    // 7. Test rollback preservation with GC:
+    // Upgrade profile-a to 2.0 (so profile-a current is 2.0, with 1.0 as previous_id rollback target)
+    let upgrade_a = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--config",
+            config.to_str().unwrap(),
+            "--cache",
+            cache_dir.to_str().unwrap(),
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "--max-age-seconds",
+            "86400",
+            "--allow-missing-valid-until",
+            "install",
+            "dich-plugin",
+            "--profile",
+            "profile-a",
+            "--exact-version",
+            "2.0-1",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(upgrade_a.status.success());
+
+    // Run GC while 2.0 is current: 1.0 must be preserved because it is in previous_id chain!
+    let gc_while_upgraded = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "gc",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+    assert!(gc_while_upgraded.status.success());
+    let up_gc_json: serde_json::Value = serde_json::from_slice(&gc_while_upgraded.stdout).unwrap();
+    assert_eq!(
+        up_gc_json["unreachable"]["trees"].as_array().unwrap().len(),
+        0,
+        "both current 2.0 and rollback target 1.0 must be preserved"
+    );
+
+    // Rollback profile-a to 1.0 succeeds because GC preserved 1.0!
+    let rollback_a = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "rollback",
+            "--profile",
+            "profile-a",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(rollback_a.status.success());
+
+    // Now that profile-a rolled back to 1.0, 2.0 is an abandoned forward generation
+    let gc_after_rollback = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "gc",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+    assert!(gc_after_rollback.status.success());
+    let rb_gc_json: serde_json::Value = serde_json::from_slice(&gc_after_rollback.stdout).unwrap();
+    assert_eq!(
+        rb_gc_json["unreachable"]["trees"].as_array().unwrap().len(),
+        1,
+        "the rolled-back 2.0 package is now unreachable and swept"
+    );
+
+    // Verify profile-a (1.0) still runs cleanly with shared libdich-common
+    let check_a_final = Command::new(checker)
+        .arg(common_in_a["explicit_path"].as_str().unwrap())
+        .arg(plugin_in_a["explicit_path"].as_str().unwrap())
+        .arg("43")
+        .status()
+        .unwrap();
+    assert!(
+        check_a_final.success(),
+        "profile-a must still execute successfully at v1"
+    );
 }
 
 #[test]
@@ -1252,7 +1569,7 @@ fn mutation_commands_fail_closed_without_running_input() {
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
         let body: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
-        assert_eq!(body["error"]["code"], "unsupported");
+        assert_eq!(body["error"]["code"], "store_open_failed");
         assert!(!marker.exists());
     }
     let install = Command::new(env!("CARGO_BIN_EXE_dich"))

@@ -295,6 +295,116 @@ impl MetadataDb {
         }
         Ok(output)
     }
+
+    /// Collect mark-and-sweep roots from active profiles (following current pointers and their
+    /// complete previous_id generation chains), plus any explicit pins and leases.
+    pub(crate) fn collect_roots(&self) -> Result<GcRoots, PublicationError> {
+        let mut active_profiles = Vec::new();
+        let mut reachable_trees = std::collections::BTreeSet::new();
+        let mut reachable_graphs = std::collections::BTreeSet::new();
+
+        if let Some(profiles) = open_optional_private_dir(&self.root, "profiles")? {
+            let mut entries = fs::Dir::read_from(&profiles).map_err(|_| PublicationError::Io)?;
+            let mut names = Vec::new();
+            while let Some(entry) = entries.read() {
+                let entry = entry.map_err(|_| PublicationError::Io)?;
+                let bytes = entry.file_name().to_bytes();
+                if matches!(bytes, b"." | b"..") {
+                    continue;
+                }
+                let name = std::str::from_utf8(bytes).map_err(|_| PublicationError::UnsafePath)?;
+                validate_profile_name(name)?;
+                names.push(name.to_owned());
+            }
+            names.sort();
+            for name in names {
+                let profile = open_private_dir(&profiles, &name)?;
+                let target = match fs::readlinkat(&profile, "current", Vec::new()) {
+                    Ok(target) => target,
+                    Err(rustix::io::Errno::NOENT) => continue,
+                    Err(_) => return Err(PublicationError::UnsafePath),
+                };
+                let target_str = std::str::from_utf8(target.to_bytes())
+                    .map_err(|_| PublicationError::UnsafePath)?;
+                let gen_id = target_str
+                    .strip_prefix("generations/")
+                    .ok_or(PublicationError::UnsafePath)?;
+                validate_digest(gen_id)?;
+                active_profiles.push(name.clone());
+
+                let generations = open_private_dir(&profile, "generations")?;
+                let mut current_id = gen_id.to_owned();
+                let mut depth = 0;
+                loop {
+                    if depth >= 10_000 {
+                        return Err(PublicationError::Limit);
+                    }
+                    depth += 1;
+                    let generation = read_generation(self, &generations, &name, &current_id)?;
+                    reachable_graphs.insert(generation.graph_id);
+                    for node in generation.graph.nodes() {
+                        reachable_trees.insert(node.clone());
+                    }
+                    if let Some(prev) = generation.previous_id {
+                        current_id = prev;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(pins) = open_optional_private_dir(&self.root, "pins")? {
+            let mut entries = fs::Dir::read_from(&pins).map_err(|_| PublicationError::Io)?;
+            while let Some(entry) = entries.read() {
+                let entry = entry.map_err(|_| PublicationError::Io)?;
+                let bytes = entry.file_name().to_bytes();
+                if matches!(bytes, b"." | b"..") {
+                    continue;
+                }
+                let name = std::str::from_utf8(bytes).map_err(|_| PublicationError::UnsafePath)?;
+                if name.len() == 64
+                    && name
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                {
+                    reachable_trees.insert(name.to_owned());
+                }
+            }
+        }
+
+        if let Some(leases) = open_optional_private_dir(&self.root, "leases")? {
+            let mut entries = fs::Dir::read_from(&leases).map_err(|_| PublicationError::Io)?;
+            while let Some(entry) = entries.read() {
+                let entry = entry.map_err(|_| PublicationError::Io)?;
+                let bytes = entry.file_name().to_bytes();
+                if matches!(bytes, b"." | b"..") {
+                    continue;
+                }
+                let name = std::str::from_utf8(bytes).map_err(|_| PublicationError::UnsafePath)?;
+                if name.len() == 64
+                    && name
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                {
+                    reachable_trees.insert(name.to_owned());
+                }
+            }
+        }
+
+        Ok(GcRoots {
+            active_profiles,
+            reachable_trees,
+            reachable_graphs,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GcRoots {
+    pub(crate) active_profiles: Vec<String>,
+    pub(crate) reachable_trees: std::collections::BTreeSet<String>,
+    pub(crate) reachable_graphs: std::collections::BTreeSet<String>,
 }
 
 fn read_profile_dir(

@@ -122,10 +122,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: SourcesCommands,
     },
-    /// Garbage collect unreachable objects (planned)
+    /// Garbage collect unreachable objects
     Gc {
+        /// Report unreachable objects and reclaimable disk space without making any changes (default)
         #[arg(long, conflicts_with = "execute")]
         dry_run: bool,
+        /// Delete unreachable trees from disk and clean up store metadata
         #[arg(long, conflicts_with = "dry_run")]
         execute: bool,
     },
@@ -177,15 +179,6 @@ impl CliError {
 }
 
 pub fn run(cli: Cli) -> Result<(), CliError> {
-    if matches!(&cli.command, Commands::Gc { .. }) {
-        dich_core::admission::admit_execution(dich_core::admission::Evidence::Unexamined).map_err(
-            |_| CliError {
-                code: "unsupported",
-                message: "package execution and store mutation are not supported",
-                trace: Vec::new(),
-            },
-        )?;
-    }
     match cli.command {
         Commands::Plan {
             package,
@@ -1264,11 +1257,172 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
             }
             Ok(())
         }
-        _ => Err(CliError {
-            code: "not_implemented",
-            message: "not implemented: this operation is not supported",
-            trace: Vec::new(),
-        }),
+        Commands::Gc { dry_run, execute } => {
+            #[cfg(target_os = "linux")]
+            {
+                let mode = if execute {
+                    dich_store::GcMode::Execute
+                } else {
+                    let _ = dry_run;
+                    dich_store::GcMode::DryRun
+                };
+                let mut db =
+                    dich_store::MetadataDb::open_existing(&cli.store_dir).map_err(|_| {
+                        CliError {
+                            code: "store_open_failed",
+                            message: "could not open existing protected store with current schema",
+                            trace: Vec::new(),
+                        }
+                    })?;
+                let report = db.collect_garbage(mode).map_err(|err| CliError {
+                    code: "gc_failed",
+                    message: match err {
+                        dich_store::PublicationError::Database => {
+                            "database error during garbage collection"
+                        }
+                        dich_store::PublicationError::Integrity => {
+                            "store integrity validation failed during garbage collection"
+                        }
+                        _ => "garbage collection failed",
+                    },
+                    trace: Vec::new(),
+                })?;
+                if cli.json {
+                    let status = if mode == dich_store::GcMode::Execute {
+                        "completed"
+                    } else {
+                        "planned"
+                    };
+                    let mode_str = if mode == dich_store::GcMode::Execute {
+                        "execute"
+                    } else {
+                        "dry-run"
+                    };
+                    let json_val = serde_json::json!({
+                        "schema_version": 1,
+                        "status": status,
+                        "mode": mode_str,
+                        "roots": {
+                            "active_profiles": report.roots.active_profiles,
+                            "reachable_trees": report.roots.reachable_tree_count,
+                            "reachable_graphs": report.roots.reachable_graph_count,
+                        },
+                        "unreachable": {
+                            "trees": report.unreachable_trees.iter().map(|t| serde_json::json!({
+                                "object_id": t.object_id,
+                                "total_size": t.total_size,
+                            })).collect::<Vec<_>>(),
+                            "graphs": report.unreachable_graphs.iter().map(|g| serde_json::json!({
+                                "graph_id": g.graph_id,
+                            })).collect::<Vec<_>>(),
+                        },
+                        "summary": {
+                            "reclaimable_bytes": report.reclaimable_bytes,
+                            "reclaimed_bytes": report.reclaimed_bytes,
+                            "retained_trees": report.retained_trees,
+                            "retained_graphs": report.retained_graphs,
+                        }
+                    });
+                    println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+                } else {
+                    render_gc_report(&report);
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (dry_run, execute);
+                Err(CliError {
+                    code: "unsupported_platform",
+                    message: "garbage collection requires Linux",
+                    trace: Vec::new(),
+                })
+            }
+        }
+    }
+}
+
+fn format_disk_size(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * KIB;
+    const GIB: u64 = 1024 * MIB;
+    if bytes >= GIB {
+        format!("{:.2} GiB ({} bytes)", bytes as f64 / GIB as f64, bytes)
+    } else if bytes >= MIB {
+        format!("{:.2} MiB ({} bytes)", bytes as f64 / MIB as f64, bytes)
+    } else if bytes >= KIB {
+        format!("{:.2} KiB ({} bytes)", bytes as f64 / KIB as f64, bytes)
+    } else {
+        format!("{} bytes", bytes)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn render_gc_report(report: &dich_store::GcReport) {
+    let mode_str = match report.mode {
+        dich_store::GcMode::DryRun => "dry-run",
+        dich_store::GcMode::Execute => "execute",
+    };
+    println!("Garbage collection ({mode_str}):");
+    println!("Roots:");
+    let profiles_str = if report.roots.active_profiles.is_empty() {
+        "none".to_string()
+    } else {
+        report.roots.active_profiles.join(", ")
+    };
+    println!(
+        "  Active profiles: {profiles_str} ({} total)",
+        report.roots.active_profiles.len()
+    );
+    println!("  Reachable trees: {}", report.roots.reachable_tree_count);
+    println!("  Reachable graphs: {}", report.roots.reachable_graph_count);
+
+    if report.unreachable_trees.is_empty() && report.unreachable_graphs.is_empty() {
+        println!("Unreachable objects: none");
+    } else {
+        let label = if report.mode == dich_store::GcMode::Execute {
+            "Removed objects:"
+        } else {
+            "Unreachable objects:"
+        };
+        println!("{label}");
+        println!(
+            "  Trees: {} ({})",
+            report.unreachable_trees.len(),
+            format_disk_size(report.reclaimable_bytes)
+        );
+        for tree in &report.unreachable_trees {
+            println!(
+                "    - {} ({})",
+                tree.object_id,
+                format_disk_size(tree.total_size)
+            );
+        }
+        println!("  Graphs: {}", report.unreachable_graphs.len());
+        for graph in &report.unreachable_graphs {
+            println!("    - {}", graph.graph_id);
+        }
+    }
+
+    println!("Summary:");
+    if report.mode == dich_store::GcMode::DryRun {
+        println!("  Status: planned (dry-run, no changes made)");
+        println!(
+            "  Reclaimable space: {}",
+            format_disk_size(report.reclaimable_bytes)
+        );
+    } else {
+        println!("  Status: completed");
+        println!(
+            "  Reclaimed space: {}",
+            format_disk_size(report.reclaimed_bytes)
+        );
+    }
+    println!("  Retained active trees: {}", report.retained_trees);
+    println!("  Retained active graphs: {}", report.retained_graphs);
+
+    if report.mode == dich_store::GcMode::DryRun && !report.unreachable_trees.is_empty() {
+        println!("\nRun 'dich gc --execute' to remove unreachable objects.");
     }
 }
 
