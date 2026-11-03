@@ -545,10 +545,15 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     .iter()
                     .map(|b| format!("{b:02x}"))
                     .collect::<String>();
+                let source = artifact.source();
+                let distribution = match source.distribution() {
+                    dich_apt::Distribution::Debian => "debian",
+                    dich_apt::Distribution::Ubuntu => "ubuntu",
+                };
                 if cli.json {
                     println!(
                         "{}",
-                        serde_json::json!({"schema_version":1,"status":"completed","state":state,"installable":false,"name":artifact.name(),"version":artifact.version(),"architecture":artifact.architecture(),"size":artifact.size(),"artifact_sha256":artifact_hash,"release_sha256":release_hash,"component":component,"tree":tree.as_ref().map(|(id, publication)| serde_json::json!({"id":id,"publication":publication,"lifecycle":"extracted","compatibility":"not_analyzed"}))})
+                        serde_json::json!({"schema_version":1,"status":"completed","state":state,"installable":false,"name":artifact.name(),"version":artifact.version(),"architecture":artifact.architecture(),"size":artifact.size(),"artifact_sha256":artifact_hash,"release_sha256":release_hash,"component":component,"source":{"distribution":distribution,"uri":source.uri(),"suite":source.suite(),"architecture":source.architecture(),"configured_fingerprints":source.fingerprints()},"tree":tree.as_ref().map(|(id, publication)| serde_json::json!({"id":id,"publication":publication,"lifecycle":"extracted","compatibility":"not_analyzed"}))})
                     );
                 } else {
                     println!(
@@ -560,6 +565,12 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     );
                     println!(
                         "artifact sha256: {artifact_hash}; signed Release sha256: {release_hash}"
+                    );
+                    println!(
+                        "source: {distribution} {} {} {}",
+                        source.uri(),
+                        source.suite(),
+                        source.architecture()
                     );
                     if let Some((id, publication)) = tree {
                         println!(

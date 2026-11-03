@@ -601,6 +601,14 @@ fn cached_query_cli_outputs_authenticated_fixture_offline() {
     let body: serde_json::Value = serde_json::from_slice(&cached.stdout).unwrap();
     assert_eq!(body["state"], "cached");
     assert_eq!(body["installable"], false);
+    assert_eq!(body["source"]["distribution"], "debian");
+    assert_eq!(body["source"]["uri"], "https://example.org/debian");
+    assert_eq!(body["source"]["suite"], "bookworm");
+    assert_eq!(body["source"]["architecture"], "amd64");
+    assert_eq!(
+        body["source"]["configured_fingerprints"],
+        serde_json::json!([fingerprint])
+    );
     assert_eq!(
         body["artifact_sha256"],
         "0c190c47a57eaf9b339049983978ff0bec52a1d19576c679c40a366cba1d4bc6"
