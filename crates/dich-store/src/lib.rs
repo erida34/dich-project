@@ -1785,4 +1785,255 @@ mod tree_tests {
         assert_eq!(db.list_profiles().unwrap(), vec![first]);
         assert!(!root.path().join("profiles/default/removed").exists());
     }
+
+    #[test]
+    #[ignore = "subprocess profile publication crash helper"]
+    fn profile_child_exits_at_boundary() {
+        use crate::profiles::ProfileFailurePoint;
+        let Some(root) = std::env::var_os("DICH_PROFILE_CRASH_ROOT") else {
+            return;
+        };
+        let point = match std::env::var("DICH_PROFILE_CRASH_POINT").unwrap().as_str() {
+            "before_manifest_sync" => ProfileFailurePoint::BeforeManifestSync,
+            "after_manifest_sync" => ProfileFailurePoint::AfterManifestSync,
+            "after_manifest_rename" => ProfileFailurePoint::AfterManifestRename,
+            "after_generations_sync" => ProfileFailurePoint::AfterGenerationsSync,
+            "before_current_rename" => ProfileFailurePoint::BeforeCurrentRename,
+            "after_current_rename" => ProfileFailurePoint::AfterCurrentRename,
+            "after_profile_sync" => ProfileFailurePoint::AfterProfileSync,
+            _ => panic!("invalid test point"),
+        };
+        let graph_id = std::env::var("DICH_PROFILE_GRAPH_ID").unwrap();
+        let mut db = MetadataDb::open(std::path::Path::new(&root)).unwrap();
+        let _ = db.publish_profile_generation_with_failure(
+            "default",
+            Some("libfixture"),
+            &graph_id,
+            point,
+        );
+        panic!("expected injected profile exit");
+    }
+
+    #[test]
+    fn profile_generation_publication_recovers_after_abrupt_process_exit_at_each_boundary() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let points = [
+            "before_manifest_sync",
+            "after_manifest_sync",
+            "after_manifest_rename",
+            "after_generations_sync",
+            "before_current_rename",
+            "after_current_rename",
+            "after_profile_sync",
+        ];
+        for point in points {
+            let (root, mut db, identity, stage) = fixture();
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+            let id = identity.hex();
+            let graph = ReferenceGraph::new(&[&id], &[]).unwrap();
+            let (graph_id, _) = db.put_reference_graph(&graph).unwrap();
+            drop(db);
+
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "tree_tests::profile_child_exits_at_boundary",
+                ])
+                .env("DICH_PROFILE_CRASH_ROOT", root.path())
+                .env("DICH_PROFILE_GRAPH_ID", &graph_id)
+                .env("DICH_PROFILE_CRASH_POINT", point)
+                .env("DICH_INJECT_PROCESS_EXIT", "1")
+                .status()
+                .unwrap();
+            assert_eq!(status.code(), Some(88), "failed at {point}");
+
+            let mut db = MetadataDb::open(root.path()).unwrap();
+            let switched_before = matches!(point, "after_current_rename" | "after_profile_sync");
+            let read_gen = db.read_profile_generation("default").unwrap();
+            if switched_before {
+                assert!(read_gen.is_some(), "expected active generation at {point}");
+            } else {
+                assert!(
+                    read_gen.is_none(),
+                    "expected no active generation at {point}"
+                );
+            }
+
+            // Idempotent replay policy: running the operation completes successfully
+            let (generation, outcome) = db
+                .publish_package_profile_generation("default", "libfixture", &graph_id)
+                .unwrap();
+            assert_eq!(
+                outcome,
+                if switched_before {
+                    crate::ProfileOutcome::Reused
+                } else {
+                    crate::ProfileOutcome::Switched
+                },
+                "expected outcome mismatch at {point}"
+            );
+            assert_eq!(generation.requested_package.as_deref(), Some("libfixture"));
+            assert_eq!(db.list_profiles().unwrap(), vec![generation]);
+        }
+    }
+
+    #[test]
+    #[ignore = "subprocess rollback crash helper"]
+    fn rollback_child_exits_at_boundary() {
+        use crate::profiles::RollbackFailurePoint;
+        let Some(root) = std::env::var_os("DICH_ROLLBACK_CRASH_ROOT") else {
+            return;
+        };
+        let point = match std::env::var("DICH_ROLLBACK_CRASH_POINT").unwrap().as_str() {
+            "before_switch" => RollbackFailurePoint::BeforeRollbackSwitch,
+            "after_switch" => RollbackFailurePoint::AfterRollbackSwitch,
+            "after_unlink" => RollbackFailurePoint::AfterRemovedUnlink,
+            _ => panic!("invalid rollback test point"),
+        };
+        let mut db = MetadataDb::open(std::path::Path::new(&root)).unwrap();
+        let _ = db.rollback_profile_generation_with_failure("default", point);
+        panic!("expected injected rollback exit");
+    }
+
+    #[test]
+    fn rollback_recovers_after_abrupt_process_exit_at_each_boundary() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let points = ["before_switch", "after_switch", "after_unlink"];
+        for point in points {
+            let (root, mut db, first_identity, stage) = fixture();
+            publish_tree_for_test(&mut db, &first_identity, &stage, FailurePoint::None).unwrap();
+            let first_id = first_identity.hex();
+            let first_graph = ReferenceGraph::new(&[&first_id], &[]).unwrap();
+            let (first_graph_id, _) = db.put_reference_graph(&first_graph).unwrap();
+            let (first, _) = db
+                .publish_package_profile_generation("default", "libfixture", &first_graph_id)
+                .unwrap();
+
+            let second_identity = identity_from_material(IdentityMaterial {
+                name: "libfixture".into(),
+                version: "2".into(),
+                architecture: "amd64".into(),
+                distribution: "debian".into(),
+                suite: "bookworm".into(),
+                uri: "https://example.org/debian".into(),
+                source_architecture: "amd64".into(),
+                components: vec!["main".into()],
+                fingerprints: vec!["012345".into()],
+                artifact_path: "pool/main/l/libfixture.deb".into(),
+                artifact_size: 42,
+                artifact_sha256: [4; 32],
+                release_sha256: [2; 32],
+                policy: 1,
+            })
+            .unwrap();
+            publish_tree_for_test(&mut db, &second_identity, &stage, FailurePoint::None).unwrap();
+            let second_id = second_identity.hex();
+            let second_graph = ReferenceGraph::new(&[&second_id], &[]).unwrap();
+            let (second_graph_id, _) = db.put_reference_graph(&second_graph).unwrap();
+            db.publish_package_profile_generation("default", "libfixture", &second_graph_id)
+                .unwrap();
+            if point == "after_unlink" {
+                db.remove_package_profile_generation("default", "libfixture")
+                    .unwrap();
+            }
+            drop(db);
+
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "tree_tests::rollback_child_exits_at_boundary",
+                ])
+                .env("DICH_ROLLBACK_CRASH_ROOT", root.path())
+                .env("DICH_ROLLBACK_CRASH_POINT", point)
+                .env("DICH_INJECT_PROCESS_EXIT", "1")
+                .status()
+                .unwrap();
+            assert_eq!(status.code(), Some(89), "failed at {point}");
+
+            let mut db = MetadataDb::open(root.path()).unwrap();
+            // Replaying rollback completes recovery
+            if point == "before_switch" {
+                let current = db.read_profile_generation("default").unwrap().unwrap();
+                assert_eq!(
+                    current.previous_id.as_deref(),
+                    Some(first.generation_id.as_str())
+                );
+                let restored = db.rollback_profile_generation("default").unwrap();
+                assert_eq!(restored, first);
+            } else {
+                let current = db.read_profile_generation("default").unwrap().unwrap();
+                assert_eq!(current, first);
+            }
+            assert_eq!(db.list_profiles().unwrap(), vec![first]);
+            assert!(!root.path().join("profiles/default/removed").exists());
+        }
+    }
+
+    #[test]
+    fn in_place_mutation_of_stored_objects_and_manifests_is_prevented() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let (root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let id = identity.hex();
+        let tree_file = root.path().join(format!("objects/{id}.tree/usr/file"));
+
+        // File is mode 0400 (read-only); opening for write must fail with permission denied
+        let write_attempt = std::fs::OpenOptions::new().write(true).open(&tree_file);
+        assert!(write_attempt.is_err());
+
+        // Manifest is mode 0400 (read-only)
+        let graph = ReferenceGraph::new(&[&id], &[]).unwrap();
+        let (graph_id, _) = db.put_reference_graph(&graph).unwrap();
+        let (generation, _) = db
+            .publish_package_profile_generation("default", "libfixture", &graph_id)
+            .unwrap();
+        let manifest_path = root.path().join(format!(
+            "profiles/default/generations/{}",
+            generation.generation_id
+        ));
+        let manifest_write = std::fs::OpenOptions::new().write(true).open(&manifest_path);
+        assert!(manifest_write.is_err());
+
+        // Replaying with identical inputs returns Reused (idempotent, no mutation)
+        let (_, outcome) = db
+            .publish_package_profile_generation("default", "libfixture", &graph_id)
+            .unwrap();
+        assert_eq!(outcome, crate::ProfileOutcome::Reused);
+
+        // Mutating manifest file mode to tamper causes read failure
+        std::fs::set_permissions(&manifest_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&manifest_path, b"corrupted").unwrap();
+        std::fs::set_permissions(&manifest_path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        assert!(db.read_profile_generation("default").is_err());
+    }
+
+    #[test]
+    fn profile_concurrent_transactions_fail_closed_under_exclusive_lock() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let (root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let id = identity.hex();
+        let graph = ReferenceGraph::new(&[&id], &[]).unwrap();
+        let (graph_id, _) = db.put_reference_graph(&graph).unwrap();
+
+        // While db holds the exclusive lock, another handle to the same store is blocked
+        let second = MetadataDb::open(root.path());
+        assert!(
+            second.is_err(),
+            "second process must not acquire exclusive lock concurrently"
+        );
+
+        // First process can complete operations safely
+        let (generation, outcome) = db
+            .publish_package_profile_generation("default", "libfixture", &graph_id)
+            .unwrap();
+        assert_eq!(outcome, crate::ProfileOutcome::Switched);
+        drop(db);
+
+        // Once released, second handle can open and see the committed state
+        let second = MetadataDb::open(root.path()).unwrap();
+        assert_eq!(second.list_profiles().unwrap(), vec![generation]);
+    }
 }

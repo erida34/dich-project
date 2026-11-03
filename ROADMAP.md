@@ -50,7 +50,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 ## Phase 5 — profiles, transactions and garbage collection (v0.6.x)
 - [x] Explicit profiles backed by atomic relative `current` symlinks and content-derived manifests containing committed store graph references (metadata validated; object bytes are not reverified here; no package files are installed or activated).
 - [x] `dich install`, `dich remove`, `dich profile list`, `dich rollback` only for supported subset, with dry-run and confirmation (authenticated single-source standalone DSO and multi-package closure profile install/remove/list, exact dependency edges, profile rollback, and installed-path `dlmopen` runtime checks verified with signed fixtures; ADR 0029).
-- [ ] Prevent in-place mutation; concurrent transactions, rollback recovery, interruption/failure injection, idempotent replay policy.
+- [x] Prevent in-place mutation; concurrent transactions, rollback recovery, interruption/failure injection, idempotent replay policy (store objects and generation manifests are read-only 0400 with collision rejection; exclusive database lock serializes concurrent transactions; process-exit fault injection covers all manifest/pointer switch and rollback boundaries with safe restart and idempotent replay).
 - [ ] Mark-and-sweep GC from profiles, pins and active leases; prevent deletion of active objects; dry-run by default for potentially destructive changes.
 - [ ] `dich gc --dry-run`, `dich gc --execute`, diagnostics and human-readable disk usage.
 - [ ] Real end-to-end smoke tests: install A/B variants, dependency dedup, remove one, GC preserves shared library, rollback.

@@ -35,6 +35,56 @@ pub struct ProfileGeneration {
     pub graph: ReferenceGraph,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProfileFailurePoint {
+    None,
+    BeforeManifestSync,
+    AfterManifestSync,
+    AfterManifestRename,
+    AfterGenerationsSync,
+    BeforeCurrentRename,
+    AfterCurrentRename,
+    AfterProfileSync,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RollbackFailurePoint {
+    None,
+    BeforeRollbackSwitch,
+    AfterRollbackSwitch,
+    AfterRemovedUnlink,
+}
+
+fn fail_profile(
+    actual: ProfileFailurePoint,
+    expected: ProfileFailurePoint,
+) -> Result<(), PublicationError> {
+    if actual == expected {
+        #[cfg(test)]
+        if std::env::var_os("DICH_INJECT_PROCESS_EXIT").is_some() {
+            std::process::exit(88);
+        }
+        Err(PublicationError::Injected)
+    } else {
+        Ok(())
+    }
+}
+
+fn fail_rollback(
+    actual: RollbackFailurePoint,
+    expected: RollbackFailurePoint,
+) -> Result<(), PublicationError> {
+    if actual == expected {
+        #[cfg(test)]
+        if std::env::var_os("DICH_INJECT_PROCESS_EXIT").is_some() {
+            std::process::exit(89);
+        }
+        Err(PublicationError::Injected)
+    } else {
+        Ok(())
+    }
+}
+
 impl MetadataDb {
     /// Publish a graph-backed immutable manifest and atomically switch the profile's `current` symlink.
     /// The graph must already reference committed private trees. This records profile metadata only;
@@ -64,6 +114,21 @@ impl MetadataDb {
         profile_name: &str,
         requested_package: Option<&str>,
         graph_id: &str,
+    ) -> Result<(ProfileGeneration, ProfileOutcome), PublicationError> {
+        self.publish_profile_generation_with_failure(
+            profile_name,
+            requested_package,
+            graph_id,
+            ProfileFailurePoint::None,
+        )
+    }
+
+    pub(crate) fn publish_profile_generation_with_failure(
+        &mut self,
+        profile_name: &str,
+        requested_package: Option<&str>,
+        graph_id: &str,
+        failure: ProfileFailurePoint,
     ) -> Result<(ProfileGeneration, ProfileOutcome), PublicationError> {
         validate_profile_name(profile_name)?;
         let graph = self.read_reference_graph(graph_id)?;
@@ -99,9 +164,10 @@ impl MetadataDb {
             graph.canonical(),
         )?;
         let generation_id = hash_hex(&manifest);
-        publish_manifest(&generations, &generation_id, &manifest)?;
+        publish_manifest(&generations, &generation_id, &manifest, failure)?;
         fs::fsync(&generations).map_err(|_| PublicationError::Io)?;
-        switch_current(&profile, &generation_id)?;
+        fail_profile(failure, ProfileFailurePoint::AfterGenerationsSync)?;
+        switch_current(&profile, &generation_id, failure)?;
 
         Ok((
             ProfileGeneration {
@@ -136,6 +202,14 @@ impl MetadataDb {
         &mut self,
         profile_name: &str,
     ) -> Result<ProfileGeneration, PublicationError> {
+        self.rollback_profile_generation_with_failure(profile_name, RollbackFailurePoint::None)
+    }
+
+    pub(crate) fn rollback_profile_generation_with_failure(
+        &mut self,
+        profile_name: &str,
+        failure: RollbackFailurePoint,
+    ) -> Result<ProfileGeneration, PublicationError> {
         validate_profile_name(profile_name)?;
         let profiles = open_private_dir(&self.root, "profiles")?;
         let profile = open_private_dir(&profiles, profile_name)?;
@@ -150,11 +224,18 @@ impl MetadataDb {
         let previous = current.previous_id.ok_or(PublicationError::Unsupported)?;
         let generations = open_private_dir(&profile, "generations")?;
         let generation = read_generation(self, &generations, profile_name, &previous)?;
-        switch_current(&profile, &generation.generation_id)?;
+        fail_rollback(failure, RollbackFailurePoint::BeforeRollbackSwitch)?;
+        switch_current(
+            &profile,
+            &generation.generation_id,
+            ProfileFailurePoint::None,
+        )?;
+        fail_rollback(failure, RollbackFailurePoint::AfterRollbackSwitch)?;
         if was_removed {
             fs::unlinkat(&profile, "removed", AtFlags::empty())
                 .map_err(|_| PublicationError::Io)?;
             fs::fsync(&profile).map_err(|_| PublicationError::Io)?;
+            fail_rollback(failure, RollbackFailurePoint::AfterRemovedUnlink)?;
         }
         Ok(generation)
     }
@@ -287,7 +368,11 @@ fn read_generation(
     })
 }
 
-fn switch_current(profile: &OwnedFd, generation_id: &str) -> Result<(), PublicationError> {
+fn switch_current(
+    profile: &OwnedFd,
+    generation_id: &str,
+    failure: ProfileFailurePoint,
+) -> Result<(), PublicationError> {
     validate_digest(generation_id)?;
     let target = format!("generations/{generation_id}");
     let link_name = random_name("current")?;
@@ -297,15 +382,19 @@ fn switch_current(profile: &OwnedFd, generation_id: &str) -> Result<(), Publicat
         name: Some(link_name.clone()),
     };
     fs::fsync(profile).map_err(|_| PublicationError::Io)?;
+    fail_profile(failure, ProfileFailurePoint::BeforeCurrentRename)?;
     fs::renameat(profile, &link_name, profile, "current").map_err(|_| PublicationError::Io)?;
     link.name = None;
-    fs::fsync(profile).map_err(|_| PublicationError::Io)
+    fail_profile(failure, ProfileFailurePoint::AfterCurrentRename)?;
+    fs::fsync(profile).map_err(|_| PublicationError::Io)?;
+    fail_profile(failure, ProfileFailurePoint::AfterProfileSync)
 }
 
 fn publish_manifest(
     generations: &OwnedFd,
     generation_id: &str,
     bytes: &[u8],
+    failure: ProfileFailurePoint,
 ) -> Result<(), PublicationError> {
     let temp_name = random_name("generation")?;
     let fd = fs::openat(
@@ -321,10 +410,12 @@ fn publish_manifest(
     };
     let mut file = std::fs::File::from(fd);
     file.write_all(bytes).map_err(|_| PublicationError::Io)?;
+    fail_profile(failure, ProfileFailurePoint::BeforeManifestSync)?;
     file.sync_all().map_err(|_| PublicationError::Io)?;
     fs::fchmod(&file, Mode::from_raw_mode(0o400)).map_err(|_| PublicationError::Io)?;
     file.sync_all().map_err(|_| PublicationError::Io)?;
     drop(file);
+    fail_profile(failure, ProfileFailurePoint::AfterManifestSync)?;
 
     match fs::renameat_with(
         generations,
@@ -341,6 +432,7 @@ fn publish_manifest(
         }
         Err(_) => return Err(PublicationError::Io),
     }
+    fail_profile(failure, ProfileFailurePoint::AfterManifestRename)?;
     Ok(())
 }
 
