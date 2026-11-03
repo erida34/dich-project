@@ -1,6 +1,10 @@
 #![forbid(unsafe_code)]
 //! Source policy, signed metadata verification and bounded parsing; package fetch remains incomplete.
 
+#[cfg(target_os = "linux")]
+mod authenticated_universe;
+#[cfg(target_os = "linux")]
+pub use authenticated_universe::{AuthenticatedUniverse, UniverseLoadError};
 mod artifact;
 #[cfg(target_os = "linux")]
 mod cache;

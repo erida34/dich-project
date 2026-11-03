@@ -94,6 +94,12 @@ impl DebianUniverse {
         }
         Ok(Self { candidates, names })
     }
+    pub fn len(&self) -> usize {
+        self.candidates.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.candidates.is_empty()
+    }
     pub fn require(&self, name: &str) -> Result<Requirement, UniverseError> {
         let parsed = parse_dependencies(name).map_err(|_| UniverseError)?;
         if parsed.len() != 1

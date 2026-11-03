@@ -650,3 +650,69 @@ fn update_rejects_hostile_responses_without_publishing_an_index() {
     );
     assert_eq!(network.calls.len(), 1);
 }
+
+#[test]
+fn resolver_loads_only_fresh_authenticated_cache_under_explicit_policy() {
+    use crate::authenticated_universe::AuthenticatedUniverse;
+    use crate::update::update_with_transport;
+    use crate::{IndexLimits, SnapshotJournal};
+    use dich_core::{ArchitecturePolicy, Distribution as ResolverDistribution};
+    let (dir, authorized) = local_authorization("https://example.org/debian");
+    let source = authorized.release().source();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    let freshness =
+        FreshnessPolicy::new(Duration::from_secs(2 * 86400), Duration::ZERO, true).unwrap();
+    let policy =
+        ArchitecturePolicy::new(ResolverDistribution::Debian, "bookworm", "amd64").unwrap();
+    let wrong = ArchitecturePolicy::new(ResolverDistribution::Ubuntu, "bookworm", "amd64").unwrap();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let mut transport = Fake {
+        responses: VecDeque::from([
+            response(
+                200,
+                None,
+                include_bytes!("../tests/fixtures/index/InRelease"),
+            ),
+            response(
+                200,
+                None,
+                include_bytes!("../tests/fixtures/index/Packages.xz"),
+            ),
+        ]),
+        calls: vec![],
+    };
+    update_with_transport(
+        source,
+        &journal,
+        freshness,
+        IndexLimits::default(),
+        &mut transport,
+        || now,
+    )
+    .unwrap();
+    let universe =
+        AuthenticatedUniverse::load_with_clock(source, &journal, freshness, &policy, || now)
+            .unwrap();
+    assert_eq!(universe.package_count(), 1);
+    assert!(
+        AuthenticatedUniverse::load_with_clock(source, &journal, freshness, &wrong, || now)
+            .is_err()
+    );
+    assert!(
+        AuthenticatedUniverse::load_with_clock(source, &journal, freshness, &policy, || now
+            + Duration::from_secs(3 * 86400))
+        .is_err()
+    );
+    let index_name = crate::cache::index_name(
+        source,
+        authorized.release().release().contents(),
+        "main",
+        IndexFormat::Xz,
+    )
+    .unwrap();
+    fs::write(dir.path().join(index_name), b"corrupt").unwrap();
+    assert!(
+        AuthenticatedUniverse::load_with_clock(source, &journal, freshness, &policy, || now)
+            .is_err()
+    );
+}
