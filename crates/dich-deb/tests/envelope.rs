@@ -25,6 +25,19 @@ fn deb(members: &[(&str, &[u8])]) -> Vec<u8> {
     }
     bytes
 }
+fn dso_package(package: &str, version: &str, path: &str, image: &[u8]) -> dich_deb::ArchiveReport {
+    let control = tar_with_file(
+        "control",
+        format!("Package: {package}\nVersion: {version}\nArchitecture: amd64\n").as_bytes(),
+    );
+    let data = tar_with_file(path, image);
+    let bytes = deb(&[
+        ("debian-binary", b"2.0\n"),
+        ("control.tar", &control),
+        ("data.tar", &data),
+    ]);
+    inspect_deb(&bytes, Limits::default()).unwrap()
+}
 #[test]
 fn reads_common_debian_envelope_and_both_tar_streams() {
     let control = tar_with_file("control", b"Package: sample\nVersion: 1\n");
@@ -179,6 +192,164 @@ fn allowlists_only_a_self_contained_library_and_loads_it_by_explicit_path() {
         .status()
         .unwrap();
     assert!(result.success());
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn supports_complete_isolated_closure_and_two_versions_with_one_dependency() {
+    let checker = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../dich-elf/tests/fixtures/dlmopen-checker"
+    );
+    for (version, plugin, expected) in [
+        (
+            "1.0",
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libplugin-v1.so").as_slice(),
+            "43",
+        ),
+        (
+            "2.0",
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libplugin-v2.so").as_slice(),
+            "44",
+        ),
+    ] {
+        let common = dso_package(
+            "libdich-common",
+            "1.0",
+            "usr/lib/x86_64-linux-gnu/libcommon.so",
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libcommon.so"),
+        );
+        let plugin = dso_package(
+            "dich-plugin",
+            version,
+            "usr/lib/x86_64-linux-gnu/libplugin.so",
+            plugin,
+        );
+        let compatibility = dich_deb::assess_compatibility_closure(&[plugin, common]);
+        assert_eq!(
+            compatibility.status,
+            dich_deb::CompatibilityStatus::Supported,
+            "{compatibility:?}"
+        );
+        assert_eq!(compatibility.evidence[0].code, "isolated_dso_closure_v1");
+        assert_eq!(compatibility.load_order, ["libcommon.so", "libplugin.so"]);
+
+        let directory = tempfile::tempdir().unwrap();
+        let common_path = directory.path().join("libcommon.so");
+        let plugin_path = directory.path().join("libplugin.so");
+        std::fs::write(
+            &common_path,
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libcommon.so"),
+        )
+        .unwrap();
+        std::fs::write(&plugin_path, plugin_image(version)).unwrap();
+        let result = std::process::Command::new(checker)
+            .arg(common_path)
+            .arg(plugin_path)
+            .arg(expected)
+            .status()
+            .unwrap();
+        assert!(
+            result.success(),
+            "isolated dlmopen fixture version {version}"
+        );
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn plugin_image(version: &str) -> &'static [u8] {
+    if version == "1.0" {
+        include_bytes!("../../dich-elf/tests/fixtures/shared-libplugin-v1.so")
+    } else {
+        include_bytes!("../../dich-elf/tests/fixtures/shared-libplugin-v2.so")
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn isolated_closure_fails_closed_for_missing_or_ambiguous_dependencies() {
+    let plugin = dso_package(
+        "dich-plugin",
+        "1.0",
+        "usr/lib/x86_64-linux-gnu/libplugin.so",
+        include_bytes!("../../dich-elf/tests/fixtures/shared-libplugin-v1.so"),
+    );
+    let unrelated = dso_package(
+        "libunrelated",
+        "1.0",
+        "usr/lib/x86_64-linux-gnu/libdich-fixture.so",
+        include_bytes!("../../dich-elf/tests/fixtures/libdich-fixture.so"),
+    );
+    let missing = dich_deb::assess_compatibility_closure(&[plugin, unrelated]);
+    assert_eq!(
+        missing.status,
+        dich_deb::CompatibilityStatus::ReviewRequired
+    );
+    assert!(
+        missing
+            .evidence
+            .iter()
+            .any(|item| item.code == "unresolved_needed")
+    );
+
+    let duplicate = dich_deb::assess_compatibility_closure(&[
+        dso_package(
+            "dich-plugin",
+            "1.0",
+            "usr/lib/x86_64-linux-gnu/libplugin.so",
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libplugin-v1.so"),
+        ),
+        dso_package(
+            "libdich-common",
+            "1.0",
+            "usr/lib/x86_64-linux-gnu/libcommon.so",
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libcommon.so"),
+        ),
+        dso_package(
+            "libdich-common-copy",
+            "1.0",
+            "usr/lib/x86_64-linux-gnu/libcommon.so",
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libcommon.so"),
+        ),
+    ]);
+    assert_eq!(duplicate.status, dich_deb::CompatibilityStatus::Unsupported);
+    assert!(
+        duplicate
+            .evidence
+            .iter()
+            .any(|item| item.code == "duplicate_soname")
+    );
+
+    let symbol_collision = dich_deb::assess_compatibility_closure(&[
+        dso_package(
+            "dich-plugin",
+            "1.0",
+            "usr/lib/x86_64-linux-gnu/libplugin.so",
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libplugin-v1.so"),
+        ),
+        dso_package(
+            "libdich-common",
+            "1.0",
+            "usr/lib/x86_64-linux-gnu/libcommon.so",
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libcommon.so"),
+        ),
+        dso_package(
+            "libdich-common-alt",
+            "1.0",
+            "usr/lib/x86_64-linux-gnu/libcommon-alt.so",
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libcommon-alt.so"),
+        ),
+    ]);
+    assert_eq!(
+        symbol_collision.status,
+        dich_deb::CompatibilityStatus::Unsupported
+    );
+    assert!(
+        symbol_collision
+            .evidence
+            .iter()
+            .any(|item| item.code == "symbol_collision")
+    );
 }
 
 #[cfg(target_arch = "x86_64")]

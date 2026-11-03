@@ -39,10 +39,14 @@ pub struct ElfReport {
     pub rpath: Vec<String>,
     pub runpath: Vec<String>,
     pub required_symbol_versions: Vec<String>,
+    /// Whether the object defines versioned dynamic symbols.
+    pub has_symbol_version_definitions: bool,
     /// Direct imports that suggest runtime loading not captured by `DT_NEEDED` alone.
     pub dynamic_loading_symbols: Vec<String>,
-    /// Undefined dynamic imports; an empty list is required by the standalone DSO subset.
+    /// Undefined dynamic imports needed to close a dependency graph.
     pub undefined_symbols: Vec<String>,
+    /// Globally visible definitions that may satisfy imports from another object.
+    pub exported_symbols: Vec<String>,
     pub is_shared_object: bool,
     pub has_initializers: bool,
     pub executable_stack_required: bool,
@@ -80,19 +84,28 @@ pub fn inspect_elf(bytes: &[u8]) -> Result<Option<ElfReport>, ElfError> {
     let runpath = copy_list(&elf.runpaths, &mut budget)?;
     let mut dynamic_loading_symbols = Vec::new();
     let mut undefined_symbols = Vec::new();
+    let mut exported_symbols = Vec::new();
     let mut has_ifunc_symbols = false;
     for symbol in &elf.dynsyms {
         has_ifunc_symbols |= symbol.st_type() == goblin::elf::sym::STT_GNU_IFUNC;
-        if symbol.st_shndx != goblin::elf::section_header::SHN_UNDEF as usize {
-            continue;
-        }
         let Some(name) = elf.dynstrtab.get_at(symbol.st_name) else {
             continue;
         };
         if !name.is_empty() {
-            push_string(&mut undefined_symbols, name, &mut budget)?;
+            if symbol.st_shndx == goblin::elf::section_header::SHN_UNDEF as usize {
+                push_string(&mut undefined_symbols, name, &mut budget)?;
+            } else if matches!(
+                symbol.st_bind(),
+                goblin::elf::sym::STB_GLOBAL | goblin::elf::sym::STB_WEAK
+            ) && matches!(
+                symbol.st_visibility(),
+                goblin::elf::sym::STV_DEFAULT | goblin::elf::sym::STV_PROTECTED
+            ) {
+                push_string(&mut exported_symbols, name, &mut budget)?;
+            }
         }
-        if matches!(name, "dlopen" | "dlmopen" | "dlsym" | "dlvsym")
+        if symbol.st_shndx == goblin::elf::section_header::SHN_UNDEF as usize
+            && matches!(name, "dlopen" | "dlmopen" | "dlsym" | "dlvsym")
             && !dynamic_loading_symbols.iter().any(|v| v == name)
         {
             push_string(&mut dynamic_loading_symbols, name, &mut budget)?;
@@ -163,6 +176,10 @@ pub fn inspect_elf(bytes: &[u8]) -> Result<Option<ElfReport>, ElfError> {
             }
         }
     }
+    let has_symbol_version_definitions = elf
+        .verdef
+        .as_ref()
+        .is_some_and(|definitions| definitions.iter().next().is_some());
     Ok(Some(ElfReport {
         class_bits,
         little_endian: elf.little_endian,
@@ -174,8 +191,10 @@ pub fn inspect_elf(bytes: &[u8]) -> Result<Option<ElfReport>, ElfError> {
         rpath,
         runpath,
         required_symbol_versions,
+        has_symbol_version_definitions,
         dynamic_loading_symbols,
         undefined_symbols,
+        exported_symbols,
         is_shared_object: elf.is_lib,
         has_initializers,
         executable_stack_required,

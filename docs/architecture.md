@@ -37,9 +37,9 @@ Control and Debian version parsers support cached package name/version queries, 
 
 `dich-elf` exposes bounded single-object ELF evidence through the pinned Goblin parser: interpreter, SONAME, NEEDED, RPATH/RUNPATH, required symbol versions and direct dynamic-loader imports (ADR 0022). The `.deb` inspector binds those reports to archive paths and records heuristic configuration/service/pkg-config/CMake/NSS/locale paths, text absolute-path tokens, shebangs, maintainer triggers and selected service/host command markers (ADR 0023). Evidence is incomplete and does not approve ABI compatibility or relocation.
 
-`dich inspect --json` maps these findings to a versioned `compatibility_report` with conservative states. `supported` is limited to one dependency-free shared object that passes the explicit-path fixture policy; it never means installed or activated (ADRs 0024 and 0025).
+`dich inspect --json` maps these findings to a versioned `compatibility_report` with conservative states. Without `--with`, `supported` includes the standalone DSO class in ADR 0025. Repeated `--with DEB` arguments provide an explicit local DSO closure for ADR 0027; closure analysis checks unique SONAMEs, internal DT_NEEDED edges, dependency reachability for imported symbols, collisions and a dependency-first load order. It does not resolve Debian package Depends or authenticate supplied archives. Both classes remain untrusted, non-installable and non-activating.
 
-No general relocation strategy is selected. RUNPATH patching, custom loaders and mount namespaces are deferred; only the unchanged standalone DSO explicit-path case is covered (ADR 0026).
+No general relocation strategy is selected. RUNPATH patching, wrappers and host mount namespaces remain deferred. The dependency closure fixture uses glibc `dlmopen` in a fresh link-map namespace, loading each DSO by explicit path and in the reported dependency-first order. This namespace isolates symbol lookup only; it is not a process or privilege sandbox and is limited to the tested x86-64 glibc runtimes (ADRs 0026 and 0027).
 
 ## Invariants
 - No store object is published prior to full verification.

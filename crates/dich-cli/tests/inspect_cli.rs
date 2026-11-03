@@ -6,6 +6,15 @@ fn run(path: &std::path::Path) -> std::process::Output {
         .output()
         .unwrap()
 }
+fn run_with(path: &std::path::Path, dependency: &std::path::Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(["--json", "inspect"])
+        .arg(path)
+        .arg("--with")
+        .arg(dependency)
+        .output()
+        .unwrap()
+}
 fn tar_file(path: &str, bytes: &[u8]) -> Vec<u8> {
     let mut output = Vec::new();
     {
@@ -39,6 +48,26 @@ fn deb() -> Vec<u8> {
         }
     }
     bytes
+}
+fn dso_deb(package: &str, version: &str, path: &str, image: &[u8]) -> Vec<u8> {
+    let control = tar_file(
+        "control",
+        format!("Package: {package}\nVersion: {version}\nArchitecture: amd64\n").as_bytes(),
+    );
+    let data = tar_file(path, image);
+    let mut archive = Vec::new();
+    {
+        let mut builder = ar::Builder::new(&mut archive);
+        for (name, body) in [
+            ("debian-binary", b"2.0\n".as_slice()),
+            ("control.tar", control.as_slice()),
+            ("data.tar", data.as_slice()),
+        ] {
+            let header = ar::Header::new(name.as_bytes().to_vec(), body.len() as u64);
+            builder.append(&header, body).unwrap();
+        }
+    }
+    archive
 }
 #[test]
 fn reports_untrusted_archive_without_running_content() {
@@ -90,6 +119,50 @@ fn supported_compatibility_does_not_claim_authenticity_or_installability() {
     assert_eq!(body["trust"], "unverified");
     assert_eq!(body["installable"], false);
     assert_eq!(body["compatibility_report"]["status"], "supported");
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn explicit_dependency_closure_is_supported_but_untrusted_and_not_installable() {
+    let dir = tempfile::tempdir().unwrap();
+    let plugin = dir.path().join("plugin.deb");
+    let common = dir.path().join("common.deb");
+    fs::write(
+        &plugin,
+        dso_deb(
+            "dich-plugin",
+            "1.0",
+            "usr/lib/x86_64-linux-gnu/libplugin.so",
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libplugin-v1.so"),
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &common,
+        dso_deb(
+            "libdich-common",
+            "1.0",
+            "usr/lib/x86_64-linux-gnu/libcommon.so",
+            include_bytes!("../../dich-elf/tests/fixtures/shared-libcommon.so"),
+        ),
+    )
+    .unwrap();
+
+    let out = run_with(&plugin, &common);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["closure_archives"], 2);
+    assert_eq!(body["trust"], "unverified");
+    assert_eq!(body["installable"], false);
+    assert_eq!(body["compatibility_report"]["status"], "supported");
+    assert_eq!(
+        body["compatibility_report"]["load_order"],
+        serde_json::json!(["libcommon.so", "libplugin.so"])
+    );
 }
 #[test]
 fn refuses_symlinks_fifos_oversized_and_malformed_files() {

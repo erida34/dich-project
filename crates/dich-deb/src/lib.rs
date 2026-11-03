@@ -140,10 +140,12 @@ pub struct CompatibilityReport {
     pub schema_version: u32,
     pub status: CompatibilityStatus,
     pub evidence: Vec<CompatibilityEvidence>,
+    /// Dependency-first SONAME order for the isolated-namespace loading recipe.
+    #[serde(default)]
+    pub load_order: Vec<String>,
 }
 
-/// Produce an evidence-based compatibility status. Current policy never returns `supported`;
-/// that result requires a later explicit package-class allowlist and validated fixtures.
+/// Produce an evidence-based compatibility status for one package.
 pub fn assess_compatibility(archive: &ArchiveReport) -> CompatibilityReport {
     if let Some(path) = allowlisted_standalone_dso(archive) {
         return CompatibilityReport {
@@ -154,6 +156,12 @@ pub fn assess_compatibility(archive: &ArchiveReport) -> CompatibilityReport {
                 path: Some(path),
                 detail: "self-contained shared object; caller must load its explicit store path; activation is not supported".into(),
             }],
+            load_order: archive.elf_objects[0]
+                .report
+                .soname
+                .iter()
+                .cloned()
+                .collect(),
         };
     }
     let mut evidence = Vec::new();
@@ -285,6 +293,14 @@ pub fn assess_compatibility(archive: &ArchiveReport) -> CompatibilityReport {
                 false,
             );
         }
+        if elf.report.has_symbol_version_definitions {
+            add(
+                "elf_symbol_version_definitions",
+                Some(&elf.path),
+                "ELF defines versioned dynamic symbols; provider semantics require review".into(),
+                false,
+            );
+        }
         if !elf.report.dynamic_loading_symbols.is_empty() {
             add(
                 "elf_dynamic_loading",
@@ -350,7 +366,324 @@ pub fn assess_compatibility(archive: &ArchiveReport) -> CompatibilityReport {
             CompatibilityStatus::ReviewRequired
         },
         evidence,
+        load_order: Vec::new(),
     }
+}
+
+/// Assess a caller-supplied closure of tiny DSO-only packages for isolated glibc loading.
+/// This does not resolve Debian Depends metadata, authenticate sources, publish objects, or load code.
+pub fn assess_compatibility_closure(archives: &[ArchiveReport]) -> CompatibilityReport {
+    let mut evidence = Vec::new();
+    let mut blocked = false;
+    let mut evidence_truncated = false;
+    let mut add = |code: &str, path: Option<&str>, detail: &str, unsupported: bool| {
+        blocked |= unsupported;
+        if evidence.len() < 511 {
+            evidence.push(CompatibilityEvidence {
+                code: code.to_owned(),
+                path: path.map(str::to_owned),
+                detail: detail.to_owned(),
+            });
+        } else if !evidence_truncated {
+            evidence.push(CompatibilityEvidence {
+                code: "evidence_truncated".to_owned(),
+                path: None,
+                detail: "additional closure findings were omitted from this bounded report"
+                    .to_owned(),
+            });
+            evidence_truncated = true;
+        }
+    };
+
+    if archives.len() < 2 || archives.len() > 16 {
+        add(
+            "closure_size",
+            None,
+            "isolated DSO closure requires 2 to 16 explicitly supplied packages",
+            true,
+        );
+    }
+    let mut objects = std::collections::BTreeMap::<String, &ElfArchiveEvidence>::new();
+    let mut dependency_edges = 0usize;
+    let mut symbol_count = 0usize;
+    let mut object_limit_exceeded = false;
+    for archive in archives {
+        if archive.data_files == 0
+            || archive.data_files != archive.elf_objects.len()
+            || !archive.scripts.is_empty()
+            || archive.triggers_present
+            || !archive.path_indicators.configuration_files.is_empty()
+            || !archive.path_indicators.service_units.is_empty()
+            || !archive.path_indicators.pkg_config_files.is_empty()
+            || !archive.path_indicators.cmake_files.is_empty()
+            || !archive.path_indicators.nss_locale_files.is_empty()
+            || !archive.path_indicators.shebangs.is_empty()
+            || !archive.path_indicators.embedded_absolute_paths.is_empty()
+            || !archive.path_indicators.host_integration_markers.is_empty()
+        {
+            add(
+                "closure_package_content",
+                None,
+                "every closure package must contain only regular DSO files and no scripts, triggers, or integration markers",
+                true,
+            );
+            continue;
+        }
+        for elf in &archive.elf_objects {
+            if objects.len() >= 256 {
+                add(
+                    "closure_object_limit",
+                    None,
+                    "dependency closure exceeds 256 ELF objects",
+                    true,
+                );
+                object_limit_exceeded = true;
+                break;
+            }
+            let name = elf.report.soname.as_deref();
+            let basename = elf.path.rsplit('/').next();
+            let structurally_safe = elf.path.starts_with("usr/lib/")
+                && basename.is_some_and(|value| value.ends_with(".so") && Some(value) == name)
+                && elf.report.class_bits == 64
+                && elf.report.little_endian
+                && elf.report.object_type == 3
+                && elf.report.is_shared_object
+                && elf.report.machine == 62
+                && elf.report.interpreter.is_none()
+                && elf.report.required_symbol_versions.is_empty()
+                && !elf.report.has_symbol_version_definitions
+                && elf.report.dynamic_loading_symbols.is_empty()
+                && elf.report.rpath.is_empty()
+                && elf.report.runpath.is_empty()
+                && !elf.report.has_initializers
+                && !elf.report.executable_stack_required
+                && !elf.report.writable_executable_segment
+                && !elf.report.has_ifunc_symbols
+                && elf.report.absolute_path_literals.is_empty();
+            if !structurally_safe {
+                add(
+                    "closure_elf_policy",
+                    Some(&elf.path),
+                    "DSO violates the isolated x86-64 glibc closure policy",
+                    true,
+                );
+                continue;
+            }
+            let Some(soname) = name.map(str::to_owned) else {
+                continue;
+            };
+            if objects.insert(soname.clone(), elf).is_some() {
+                add(
+                    "duplicate_soname",
+                    Some(&elf.path),
+                    "closure contains more than one object with this SONAME",
+                    true,
+                );
+            }
+            dependency_edges = dependency_edges.saturating_add(elf.report.needed.len());
+            symbol_count = symbol_count
+                .saturating_add(elf.report.undefined_symbols.len())
+                .saturating_add(elf.report.exported_symbols.len());
+            if symbol_count > 65_536 {
+                add(
+                    "closure_symbol_limit",
+                    None,
+                    "dependency closure exceeds 65536 dynamic symbol records",
+                    true,
+                );
+                object_limit_exceeded = true;
+                break;
+            }
+        }
+        if object_limit_exceeded {
+            break;
+        }
+    }
+
+    if dependency_edges == 0 {
+        add(
+            "no_shared_dependency",
+            None,
+            "closure contains no ELF dependency edge",
+            false,
+        );
+    }
+
+    for (soname, elf) in &objects {
+        for needed in &elf.report.needed {
+            if !objects.contains_key(needed) {
+                add(
+                    "unresolved_needed",
+                    Some(&elf.path),
+                    &format!("DT_NEEDED {needed} is not present in the supplied closure"),
+                    false,
+                );
+            } else if needed == soname {
+                add(
+                    "self_dependency",
+                    Some(&elf.path),
+                    "an object cannot depend on its own SONAME",
+                    true,
+                );
+            }
+        }
+    }
+    if closure_has_cycle(&objects) {
+        add(
+            "dependency_cycle",
+            None,
+            "cyclic DSO dependencies are outside the supported closure policy",
+            true,
+        );
+    }
+
+    let mut providers = std::collections::BTreeMap::<String, String>::new();
+    let mut collisions = std::collections::BTreeSet::new();
+    for (soname, elf) in &objects {
+        for symbol in &elf.report.exported_symbols {
+            if providers.insert(symbol.clone(), soname.clone()).is_some() {
+                collisions.insert(symbol.clone());
+            }
+        }
+    }
+    for symbol in collisions {
+        add(
+            "symbol_collision",
+            None,
+            &format!("multiple closure objects export {symbol}; interposition is ambiguous"),
+            true,
+        );
+    }
+    for (soname, elf) in &objects {
+        for symbol in &elf.report.undefined_symbols {
+            let Some(provider) = providers.get(symbol) else {
+                add(
+                    "unresolved_symbol",
+                    Some(&elf.path),
+                    &format!("undefined symbol {symbol} has no provider in the closure"),
+                    false,
+                );
+                continue;
+            };
+            if provider == soname || !dependency_reaches(soname, provider, &objects) {
+                add(
+                    "unreachable_symbol_provider",
+                    Some(&elf.path),
+                    &format!("symbol {symbol} is not provided by this object's dependency graph"),
+                    false,
+                );
+            }
+        }
+    }
+
+    let supported = evidence.is_empty();
+    if supported {
+        evidence.push(CompatibilityEvidence {
+            code: "isolated_dso_closure_v1".into(),
+            path: None,
+            detail: "complete, collision-free DSO closure; load each SONAME in this dependency-first order in a fresh glibc namespace using explicit object paths; installation and activation are not supported".into(),
+        });
+    }
+    CompatibilityReport {
+        schema_version: 1,
+        status: if blocked {
+            CompatibilityStatus::Unsupported
+        } else if !supported {
+            CompatibilityStatus::ReviewRequired
+        } else {
+            CompatibilityStatus::Supported
+        },
+        evidence,
+        load_order: if supported {
+            dependency_order(&objects)
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+fn dependency_order(
+    objects: &std::collections::BTreeMap<String, &ElfArchiveEvidence>,
+) -> Vec<String> {
+    fn visit(
+        node: &str,
+        objects: &std::collections::BTreeMap<String, &ElfArchiveEvidence>,
+        visited: &mut std::collections::BTreeSet<String>,
+        order: &mut Vec<String>,
+    ) {
+        if !visited.insert(node.to_owned()) {
+            return;
+        }
+        if let Some(object) = objects.get(node) {
+            for dependency in &object.report.needed {
+                if objects.contains_key(dependency) {
+                    visit(dependency, objects, visited, order);
+                }
+            }
+        }
+        order.push(node.to_owned());
+    }
+    let mut visited = std::collections::BTreeSet::new();
+    let mut order = Vec::with_capacity(objects.len());
+    for name in objects.keys() {
+        visit(name, objects, &mut visited, &mut order);
+    }
+    order
+}
+
+fn closure_has_cycle(objects: &std::collections::BTreeMap<String, &ElfArchiveEvidence>) -> bool {
+    fn visit(
+        node: &str,
+        objects: &std::collections::BTreeMap<String, &ElfArchiveEvidence>,
+        visiting: &mut std::collections::BTreeSet<String>,
+        visited: &mut std::collections::BTreeSet<String>,
+    ) -> bool {
+        if visited.contains(node) {
+            return false;
+        }
+        if !visiting.insert(node.to_owned()) {
+            return true;
+        }
+        if let Some(object) = objects.get(node) {
+            for next in &object.report.needed {
+                if objects.contains_key(next) && visit(next, objects, visiting, visited) {
+                    return true;
+                }
+            }
+        }
+        visiting.remove(node);
+        visited.insert(node.to_owned());
+        false
+    }
+    let mut visiting = std::collections::BTreeSet::new();
+    let mut visited = std::collections::BTreeSet::new();
+    objects
+        .keys()
+        .any(|node| visit(node, objects, &mut visiting, &mut visited))
+}
+
+fn dependency_reaches(
+    source: &str,
+    target: &str,
+    objects: &std::collections::BTreeMap<String, &ElfArchiveEvidence>,
+) -> bool {
+    let mut pending = vec![source.to_owned()];
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(current) = pending.pop() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        let Some(object) = objects.get(&current) else {
+            continue;
+        };
+        for next in &object.report.needed {
+            if next == target {
+                return true;
+            }
+            pending.push(next.clone());
+        }
+    }
+    false
 }
 
 fn allowlisted_standalone_dso(archive: &ArchiveReport) -> Option<String> {
@@ -383,6 +716,7 @@ fn allowlisted_standalone_dso(archive: &ArchiveReport) -> Option<String> {
         || !report.needed.is_empty()
         || !report.undefined_symbols.is_empty()
         || !report.required_symbol_versions.is_empty()
+        || report.has_symbol_version_definitions
         || !report.dynamic_loading_symbols.is_empty()
         || !report.rpath.is_empty()
         || !report.runpath.is_empty()

@@ -1,16 +1,17 @@
-# ADR 0027 — Shared-dependency integration boundary
+# ADR 0027 — Isolated DSO dependency closures
 
-Status: Proposed; the Phase 4 shared-dependency integration gate remains open.
+Status: Accepted for a narrowly bounded, non-installing x86-64 glibc class.
 
 ## Context
 
-The Phase 4 integration criterion requires two allowed versions sharing a dependency. ADR 0025 allows only one self-contained DSO per package and rejects all `NEEDED` entries. ADR 0026 selects direct explicit-path loading for that class and rejects a custom loader, wrapper, ambient loader paths, RUNPATH patching, and mount namespaces for broader packages. The current allowed class therefore cannot express the integration fixture requested by the roadmap.
+ADR 0025 accepts one self-contained DSO. The Phase 4 integration gate also requires two package versions sharing a dependency. Ambient loader paths, RUNPATH rewriting and arbitrary wrappers remain out of scope (ADR 0026). A runtime boundary is needed that can resolve the exact supplied closure without changing ELF bytes or the caller's global loader namespace.
 
-## Evidence
+## Decision
 
-On Ubuntu WSL and Debian 13 WSL, two unsigned local `.deb` fixtures containing one dependency-free DSO each were reported `supported` by `dich inspect --json`. Both unchanged DSO versions loaded by explicit path in both runtimes. These checks establish only the existing standalone fixture class. They do not test a shared dependency, repository signatures, store publication, installation, or activation. The Debian fixture used gzip; xz inspection invokes `/usr/bin/xz`, which is absent from this minimal WSL image.
+`dich inspect ROOT.deb --with DEP.deb ...` accepts at most 16 caller-supplied archives and evaluates their combined ELF closure. Every data file must be one regular DSO under `usr/lib`, with path basename matching its SONAME. Only x86-64, little-endian ET_DYN objects are accepted. The closure must have unique SONAMEs, only internal `DT_NEEDED` edges, an acyclic graph, no duplicate global exports, and exactly one reachable in-closure provider for every undefined dynamic symbol. Interpreters, symbol-version imports or definitions, `dlopen` family imports, RPATH/RUNPATH, constructors, IFUNC, executable stack, W+X segments, absolute-path literals, scripts, triggers and host-integration markers fail closed. Analysis bounds the closure to 256 ELF objects, 65,536 dynamic symbol records and 512 evidence entries.
 
-## Decision needed
+The report returns a dependency-first SONAME order. The tested runtime recipe creates a fresh glibc link-map namespace with `dlmopen(LM_ID_NEWLM, dependency_path, RTLD_NOW | RTLD_LOCAL)`, obtains that namespace with `dlinfo`, then opens each remaining object into the same namespace by explicit path. Each package version gets its own fresh namespace, so two versions can use the same dependency bytes without sharing symbol scope. Dich reports the recipe and order; it does not load package code, install objects, create profiles, resolve Debian `Depends`, or authenticate local `--with` inputs.
 
-Before changing the allowlist, define and test a dependency-closure contract that answers how dependencies are resolved and loaded, how SONAME collisions and symbol interposition are prevented, and how ABI/version constraints are checked. Keep dependency-bearing packages `review_required` or `unsupported` until that contract has an end-to-end fixture across both distributions. Do not mark the shared-dependency roadmap item complete based on standalone fixtures.
+## Evidence and limits
 
+Fixture packages cover a common DSO and two versions of a plugin with the same SONAME and `DT_NEEDED libcommon.so`. A C harness loads each version in a fresh namespace and verifies its result. Ubuntu Noble WSL and Debian 13 WSL both passed both versions. Negative fixtures cover a missing dependency and duplicate SONAME. This is not a sandbox: any later call into the DSO executes with the caller's privileges and can issue syscalls. The configured publisher must remain trusted. Other architectures, musl, symbol-versioned objects, dependencies outside the supplied closure, package scripts, and general Debian packages remain `review_required` or `unsupported`.

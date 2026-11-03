@@ -71,8 +71,13 @@ pub enum Commands {
         #[arg(long)]
         publish_tree: bool,
     },
-    /// Examine an unauthenticated local Debian archive without extracting it
-    Inspect { file: String },
+    /// Examine unauthenticated local Debian archives without extracting them
+    Inspect {
+        file: String,
+        /// Additional packages explicitly supplied as one ELF dependency closure
+        #[arg(long = "with", value_name = "DEB", action = clap::ArgAction::Append)]
+        with: Vec<String>,
+    },
     /// Install compatible packages into a profile (planned)
     Install {
         package: String,
@@ -636,19 +641,36 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 })
             }
         }
-        Commands::Inspect { file } => {
+        Commands::Inspect { file, with } => {
             #[cfg(target_os = "linux")]
             {
-                let report = dich_deb::inspect_path(
-                    std::path::Path::new(&file),
-                    dich_deb::Limits::default(),
-                )
-                .map_err(|_| CliError {
-                    code: "inspect_failed",
-                    message: "could not safely inspect local Debian archive",
-                    trace: Vec::new(),
-                })?;
-                let compatibility = dich_deb::assess_compatibility(&report);
+                if with.len() >= 16 {
+                    return Err(CliError {
+                        code: "closure_too_large",
+                        message: "at most 15 additional packages may be supplied",
+                        trace: Vec::new(),
+                    });
+                }
+                let mut archives = Vec::with_capacity(with.len() + 1);
+                for path in std::iter::once(&file).chain(&with) {
+                    archives.push(
+                        dich_deb::inspect_path(
+                            std::path::Path::new(path),
+                            dich_deb::Limits::default(),
+                        )
+                        .map_err(|_| CliError {
+                            code: "inspect_failed",
+                            message: "could not safely inspect local Debian archive",
+                            trace: Vec::new(),
+                        })?,
+                    );
+                }
+                let report = &archives[0];
+                let compatibility = if with.is_empty() {
+                    dich_deb::assess_compatibility(report)
+                } else {
+                    dich_deb::assess_compatibility_closure(&archives)
+                };
                 if cli.json {
                     let scripts: Vec<_> = report
                         .scripts
@@ -657,7 +679,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         .collect();
                     println!(
                         "{}",
-                        serde_json::json!({"schema_version":1,"status":"completed","trust":"unverified","installable":false,"control_entries":report.control_entries,"control_files":report.control_files,"data_entries":report.data_entries,"data_files":report.data_files,"data_file_bytes":report.data_file_bytes,"scripts":scripts,"triggers_present":report.triggers_present,"path_indicators":report.path_indicators,"elf_objects":report.elf_objects,"compatibility_report":compatibility})
+                        serde_json::json!({"schema_version":1,"status":"completed","trust":"unverified","installable":false,"closure_archives":archives.len(),"control_entries":report.control_entries,"control_files":report.control_files,"data_entries":report.data_entries,"data_files":report.data_files,"data_file_bytes":report.data_file_bytes,"scripts":scripts,"triggers_present":report.triggers_present,"path_indicators":report.path_indicators,"elf_objects":report.elf_objects,"compatibility_report":compatibility})
                     );
                 } else {
                     println!("completed: unverified local archive; installability not established");
@@ -666,6 +688,12 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         compatibility.status.as_str(),
                         compatibility.evidence.len()
                     );
+                    if !with.is_empty() {
+                        println!(
+                            "explicit dependency closure: {} archives; unauthenticated and not activated",
+                            archives.len()
+                        );
+                    }
                     println!(
                         "control files: {}; data files: {}; data bytes: {}; triggers: {}",
                         report.control_files,
@@ -673,7 +701,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         report.data_file_bytes,
                         report.triggers_present
                     );
-                    for script in report.scripts {
+                    for script in &report.scripts {
                         println!(
                             "script metadata: {} {} {}",
                             script.name, script.size, script.sha256
@@ -684,7 +712,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
             }
             #[cfg(not(target_os = "linux"))]
             {
-                let _ = file;
+                let _ = (file, with);
                 Err(CliError {
                     code: "unsupported_platform",
                     message: "local archive inspection requires Linux",

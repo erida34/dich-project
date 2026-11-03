@@ -9,3 +9,7 @@
 `constructor-library.so` is built from `constructor-library.c` with the same flags and includes a dynamic initializer; it is a negative policy fixture (SHA256 `09282306b0ca5410969876c4c989d010053dd7246ba030c8fce603471de8796b`).
 
 `path-library.so` is built from `path-library.c` with the same flags and embeds `/etc/dich-fixture.conf` in `.rodata`; it is a negative absolute-path policy fixture (SHA256 `2e660d89cd050033144369e163f9ff1646c47eebc13e4f7bb1e9a37e6df36af2`).
+
+`shared-libcommon.so` and `shared-libplugin-v1.so` / `shared-libplugin-v2.so` are dependency-closure fixtures built with `-shared -fPIC -nostdlib`. Both plugin versions have the same SONAME and `DT_NEEDED libcommon.so`; the common DSO exports the only imported function. `dlmopen-checker` loads the common object by explicit path in a new glibc namespace, obtains that namespace with `dlinfo`, then loads one plugin version into that namespace. Each version is tested in a fresh namespace on Ubuntu and Debian WSL. The test proves this small x86-64 glibc loader case only; it is not an installer, package resolver, signature test, or general ABI guarantee.
+
+`shared-libcommon-alt.so` exports the same function as `shared-libcommon.so` under a different SONAME and exists to test rejection of ambiguous symbol providers. Missing-provider and duplicate-SONAME closures are also rejected by fixture tests.
