@@ -107,6 +107,30 @@ fn inventories_host_integration_paths_without_claiming_compatibility() {
             .any(|marker| marker.marker == "systemctl")
     );
 }
+
+#[test]
+fn links_elf_facts_to_archive_paths_without_approving_compatibility() {
+    let control = tar_with_file("control", b"Package: sample\nVersion: 1\n");
+    let data = tar_with_file(
+        "usr/bin/true",
+        include_bytes!("../../dich-elf/tests/fixtures/ubuntu-true"),
+    );
+    let bytes = deb(&[
+        ("debian-binary", b"2.0\n"),
+        ("control.tar", &control),
+        ("data.tar", &data),
+    ]);
+    let report = inspect_deb(&bytes, Limits::default()).unwrap();
+    assert_eq!(report.elf_objects.len(), 1);
+    assert_eq!(report.elf_objects[0].path, "usr/bin/true");
+    assert!(
+        report.elf_objects[0]
+            .report
+            .needed
+            .iter()
+            .any(|name| name == "libc.so.6")
+    );
+}
 #[test]
 fn rejects_wrong_order_duplicate_members_truncation_and_size_limits() {
     let control = tar_with_file("control", b"metadata");

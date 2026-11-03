@@ -70,6 +70,12 @@ pub struct ArchiveReport {
     pub triggers_present: bool,
     /// File locations requiring explicit compatibility review; path names alone are not policy.
     pub path_indicators: PackagePathIndicators,
+    pub elf_objects: Vec<ElfArchiveEvidence>,
+}
+#[derive(Debug, PartialEq, Eq)]
+pub struct ElfArchiveEvidence {
+    pub path: String,
+    pub report: dich_elf::ElfReport,
 }
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct PackagePathIndicators {
@@ -178,6 +184,7 @@ pub fn inspect_deb(bytes: &[u8], limits: Limits) -> Result<ArchiveReport, DebErr
         scripts: control_report.scripts,
         triggers_present: control_report.triggers_present,
         path_indicators,
+        elf_objects: data_report.elf_objects,
     })
 }
 
@@ -293,6 +300,7 @@ struct TarReport {
     scripts: Vec<ScriptMetadata>,
     triggers_present: bool,
     path_indicators: PackagePathIndicators,
+    elf_objects: Vec<ElfArchiveEvidence>,
 }
 
 fn inspect_tar(bytes: &[u8], limits: Limits, control: bool) -> Result<TarReport, DebError> {
@@ -307,6 +315,7 @@ fn inspect_tar(bytes: &[u8], limits: Limits, control: bool) -> Result<TarReport,
     let mut scripts = Vec::new();
     let mut triggers_present = false;
     let mut path_indicators = PackagePathIndicators::default();
+    let mut elf_objects = Vec::new();
     let mut paths: std::collections::BTreeMap<Vec<u8>, bool> = std::collections::BTreeMap::new();
     {
         let entries = archive
@@ -409,6 +418,19 @@ fn inspect_tar(bytes: &[u8], limits: Limits, control: bool) -> Result<TarReport,
                 String::from_utf8(normalized.clone()).map_err(|_| DebError::Unsupported)?
             };
             scan_content_indicators(&mut path_indicators, &scan_path, &content)?;
+            if !control {
+                if let Some(report) =
+                    dich_elf::inspect_elf(&content).map_err(|_| DebError::Unsupported)?
+                {
+                    if elf_objects.len() >= 4096 {
+                        return Err(DebError::Limit);
+                    }
+                    elf_objects.push(ElfArchiveEvidence {
+                        path: scan_path.clone(),
+                        report,
+                    });
+                }
+            }
             if let Some(name) = metadata_name {
                 use sha2::{Digest, Sha256};
                 let hash: String = Sha256::digest(&content)
@@ -440,6 +462,7 @@ fn inspect_tar(bytes: &[u8], limits: Limits, control: bool) -> Result<TarReport,
         scripts,
         triggers_present,
         path_indicators,
+        elf_objects,
     })
 }
 

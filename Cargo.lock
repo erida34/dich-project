@@ -247,6 +247,7 @@ version = "0.1.0"
 dependencies = [
  "ar",
  "dich-apt",
+ "dich-elf",
  "rustix",
  "sha2",
  "tar",

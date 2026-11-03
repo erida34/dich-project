@@ -3,6 +3,7 @@
 ## [Unreleased]
 - Added bounded byte-level ELF inventory for interpreter, SONAME, NEEDED libraries, search paths, direct dynamic-loading imports and required symbol versions; it does not approve compatibility.
 - `dich-deb` inspection now reports heuristic path and text indicators for package configuration, services, pkg-config/CMake, NSS/locale, shebangs, absolute path tokens and selected host commands; compatibility analysis remains incomplete.
+- `.deb` inspection now associates bounded ELF evidence with archive file paths, including loader, dependency, search-path and symbol-version facts.
 - `update` and `fetch` accept an explicit credential-free HTTP CONNECT proxy URL; TLS certificate and signed repository metadata checks remain enabled.
 - Authenticated repository metadata update and offline package-name, version and source queries; experimental exact-version `fetch` downloads or revalidates a cached artifact and can explicitly publish a conservative tree without installing.
 - Added an explicit resolver release and architecture policy model; no resolver or installation is implemented.
