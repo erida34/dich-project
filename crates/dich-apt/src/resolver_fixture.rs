@@ -119,6 +119,10 @@ impl DebianUniverse {
         }
         Ok(Requirement(parsed[0].alternatives().to_vec()))
     }
+    pub(crate) fn identity(&self, id: usize) -> Option<(String, String)> {
+        let c = self.candidates.get(id)?;
+        Some((c.name.clone(), c.version.as_str().to_owned()))
+    }
     pub fn label(&self, id: usize) -> Option<String> {
         let c = self.candidates.get(id)?;
         Some(format!("{}={}", c.name, c.version.as_str()))

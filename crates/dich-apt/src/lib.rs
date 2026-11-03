@@ -5,7 +5,7 @@
 mod authenticated_universe;
 #[cfg(target_os = "linux")]
 pub use authenticated_universe::{
-    AuthenticatedUniverse, MetadataPlan, PlanError, UniverseLoadError,
+    AuthenticatedUniverse, MetadataPin, MetadataPlan, PlanError, UniverseLoadError,
 };
 mod artifact;
 #[cfg(target_os = "linux")]

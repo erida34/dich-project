@@ -698,6 +698,21 @@ fn resolver_loads_only_fresh_authenticated_cache_under_explicit_policy() {
         .plan_with_clock(&journal, "fixture", || now)
         .unwrap();
     assert_eq!(plan.packages, vec!["fixture=1.0-1"]);
+    assert_eq!(plan.pins.len(), 1);
+    assert_eq!(plan.pins[0].name, "fixture");
+    assert_eq!(plan.pins[0].version, "1.0-1");
+    assert_eq!(plan.pins[0].architecture, "amd64");
+    assert_eq!(plan.pins[0].source_uri, "https://example.org/debian");
+    assert_eq!(plan.pins[0].suite, "bookworm");
+    assert_eq!(plan.pins[0].component, "main");
+    assert_eq!(
+        plan.pins[0].artifact_sha256,
+        "0c190c47a57eaf9b339049983978ff0bec52a1d19576c679c40a366cba1d4bc6"
+    );
+    assert_eq!(
+        plan.pins[0].release_sha256,
+        "2fc2aacdc19b6c50a790883f121bf813a050dd5113d5152e0bd6d3facd3e4668"
+    );
     assert!(plan.trace.iter().any(|item| item.contains("fixture=1.0-1")));
     assert!(
         AuthenticatedUniverse::load_with_clock(source, &journal, freshness, &wrong, || now)

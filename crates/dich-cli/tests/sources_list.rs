@@ -217,6 +217,16 @@ fn cached_query_cli_outputs_authenticated_fixture_offline() {
     );
     let body: serde_json::Value = serde_json::from_slice(&planned.stdout).unwrap();
     assert_eq!(body["status"], "planned");
+    assert_eq!(
+        body["pins"][0]["artifact_sha256"],
+        "0c190c47a57eaf9b339049983978ff0bec52a1d19576c679c40a366cba1d4bc6"
+    );
+    assert_eq!(body["pins"][0]["architecture"], "amd64");
+    assert_eq!(body["pins"][0]["suite"], "bookworm");
+    assert_eq!(
+        body["pins"][0]["release_sha256"].as_str().unwrap().len(),
+        64
+    );
     assert_eq!(body["packages"], serde_json::json!(["fixture=1.0-1"]));
     assert!(
         body["trace"]

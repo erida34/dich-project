@@ -229,14 +229,24 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     },
                 })?;
                 if cli.json {
+                    let pins: Vec<_> = plan.pins.iter().map(|pin| serde_json::json!({"name":pin.name,"version":pin.version,"architecture":pin.architecture,"source_uri":pin.source_uri,"distribution":pin.distribution,"suite":pin.suite,"component":pin.component,"source_architecture":pin.source_architecture,"fingerprints":pin.fingerprints,"release_sha256":pin.release_sha256,"artifact_sha256":pin.artifact_sha256,"filename":pin.filename,"size":pin.size})).collect();
                     println!(
                         "{}",
-                        serde_json::json!({"schema_version":1,"status":"planned","scope":"metadata_only_not_installable","packages":plan.packages,"trace":plan.trace})
+                        serde_json::json!({"schema_version":1,"status":"planned","scope":"metadata_only_not_installable","packages":plan.packages,"pins":pins,"trace":plan.trace})
                     );
                 } else {
                     println!("planned: metadata only; not installable");
-                    for item in plan.packages {
-                        println!("{item}");
+                    for pin in plan.pins {
+                        println!(
+                            "{}={}\t{}\t{}\t{}\t{}\t{}",
+                            pin.name,
+                            pin.version,
+                            pin.architecture,
+                            pin.source_uri,
+                            pin.suite,
+                            pin.release_sha256,
+                            pin.artifact_sha256
+                        );
                     }
                     for event in plan.trace {
                         println!("  {event}");

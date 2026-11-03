@@ -24,7 +24,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Explicit release/architecture policy. Initially *same distro release and arch only*; no cross-release mixing.
 - [x] Model Depends, Pre-Depends, conflicts, provides, alternatives, version constraints, multiarch qualifiers, essential/system base boundaries.
 - [x] Deterministic resolver and `dich plan` with explainable decisions, cycles/conflicts/unsat traces (bounded single-source metadata subset; unsupported cases fail closed).
-- [ ] Pin exact package version, repository snapshot digest, architecture, source identity and artifact SHA256 in lock/plan.
+- [x] Pin exact package version, repository snapshot digest, architecture, source identity and artifact SHA256 in lock/plan (informational plan output; no persistent lock replay).
 - [ ] Reject operations involving unsupported dpkg actions, service managers, kernel modules, unknown package triggers or global state.
 - [ ] Resolver tests for duplicate names/versions, virtual packages, conflicts, downgrades, cyclic dependencies, arch mismatch.
 

@@ -193,45 +193,85 @@ pub fn select_indexed_artifact(
         if selected.is_some() {
             return Err(ArtifactError::Ambiguous);
         }
-        let arch = stanza
-            .get("architecture")
-            .ok_or(ArtifactError::InvalidIndex)?;
-        if arch != "all" && arch != index.source.architecture() {
-            return Err(ArtifactError::Unsupported);
-        }
-        let path = stanza
-            .get("filename")
-            .filter(|s| valid_path(s))
-            .ok_or(ArtifactError::InvalidIndex)?;
-        let size = stanza
-            .get("size")
-            .ok_or(ArtifactError::InvalidIndex)?
-            .parse::<u64>()
-            .map_err(|_| ArtifactError::InvalidIndex)?;
-        if size == 0 || size > 8 * 1024 * 1024 * 1024 {
-            return Err(ArtifactError::Unsupported);
-        }
-        let hash = stanza.get("sha256").ok_or(ArtifactError::InvalidIndex)?;
-        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(ArtifactError::InvalidIndex);
-        }
-        let mut sha256 = [0; 32];
-        for (i, byte) in sha256.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&hash[2 * i..2 * i + 2], 16)
-                .map_err(|_| ArtifactError::InvalidIndex)?;
-        }
-        selected = Some(IndexedArtifact {
-            source: index.source.clone(),
-            release_digest: index.release_digest,
-            name: name.to_owned(),
-            version: version.to_owned(),
-            architecture: arch.to_owned(),
-            path: path.to_owned(),
-            size,
-            sha256,
-        });
+        selected = Some(indexed_stanza(index, &stanza, name, version)?);
     }
     selected.ok_or(ArtifactError::NotFound)
+}
+
+/// Select requested identities in one pass; absent identities are omitted for multi-component callers.
+pub(crate) fn select_indexed_artifacts(
+    index: &VerifiedIndex,
+    requested: &std::collections::BTreeSet<(String, String)>,
+) -> Result<Vec<IndexedArtifact>, ArtifactError> {
+    if requested.len() > 128
+        || requested
+            .iter()
+            .any(|(name, version)| !valid_name(name) || DebianVersion::parse(version).is_err())
+    {
+        return Err(ArtifactError::Unsupported);
+    }
+    let stanzas =
+        parse_control_stanzas(index.contents()).map_err(|_| ArtifactError::InvalidIndex)?;
+    let mut selected = std::collections::BTreeMap::new();
+    for stanza in stanzas {
+        let (Some(name), Some(version)) = (stanza.get("package"), stanza.get("version")) else {
+            continue;
+        };
+        let identity = (name.to_owned(), version.to_owned());
+        if requested.contains(&identity) {
+            let artifact = indexed_stanza(index, &stanza, name, version)?;
+            if selected.insert(identity, artifact).is_some() {
+                return Err(ArtifactError::Ambiguous);
+            }
+        }
+    }
+    Ok(selected.into_values().collect())
+}
+
+/// `stanza` must originate from this verified index, not an independent input.
+fn indexed_stanza(
+    index: &VerifiedIndex,
+    stanza: &crate::ControlStanza,
+    name: &str,
+    version: &str,
+) -> Result<IndexedArtifact, ArtifactError> {
+    let arch = stanza
+        .get("architecture")
+        .ok_or(ArtifactError::InvalidIndex)?;
+    if arch != "all" && arch != index.source.architecture() {
+        return Err(ArtifactError::Unsupported);
+    }
+    let path = stanza
+        .get("filename")
+        .filter(|s| valid_path(s))
+        .ok_or(ArtifactError::InvalidIndex)?;
+    let size = stanza
+        .get("size")
+        .ok_or(ArtifactError::InvalidIndex)?
+        .parse::<u64>()
+        .map_err(|_| ArtifactError::InvalidIndex)?;
+    if size == 0 || size > 8 * 1024 * 1024 * 1024 {
+        return Err(ArtifactError::Unsupported);
+    }
+    let hash = stanza.get("sha256").ok_or(ArtifactError::InvalidIndex)?;
+    if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(ArtifactError::InvalidIndex);
+    }
+    let mut sha256 = [0; 32];
+    for (i, byte) in sha256.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hash[2 * i..2 * i + 2], 16)
+            .map_err(|_| ArtifactError::InvalidIndex)?;
+    }
+    Ok(IndexedArtifact {
+        source: index.source.clone(),
+        release_digest: index.release_digest,
+        name: name.to_owned(),
+        version: version.to_owned(),
+        architecture: arch.to_owned(),
+        path: path.to_owned(),
+        size,
+        sha256,
+    })
 }
 
 fn valid_name(s: &str) -> bool {
@@ -301,6 +341,9 @@ mod tests {
                 release_digest: [0; 32],
             };
             assert!(select_indexed_artifact(&index, "fixture", "1.0-1").is_err());
+            let requested =
+                std::collections::BTreeSet::from([("fixture".to_string(), "1.0-1".to_string())]);
+            assert!(select_indexed_artifacts(&index, &requested).is_err());
         }
     }
 }
