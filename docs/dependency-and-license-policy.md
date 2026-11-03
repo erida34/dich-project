@@ -10,7 +10,7 @@ Dich maintains a conservative dependency posture. In accordance with project eng
 
 ## 2. License Compliance Policy
 
-Dich is dual-licensed under the **MIT License** and the **Apache License, Version 2.0**.
+Dich itself is licensed exclusively under the **Apache License, Version 2.0** (see [`LICENSE-APACHE`](../LICENSE-APACHE)). Third-party dependencies retain their own licenses; the dependency allowlist below does not change Dich's license.
 - All dependencies linked into Dich binaries or libraries must use permissive OSI-approved licenses:
   - `MIT`
   - `Apache-2.0` (and `Apache-2.0 WITH LLVM-exception`)

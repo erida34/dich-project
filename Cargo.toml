@@ -4,7 +4,7 @@ members = ["crates/dich-cli", "crates/dich-core", "crates/dich-apt", "crates/dic
 
 [workspace.package]
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 version = "0.1.0"
 rust-version = "1.85"
 

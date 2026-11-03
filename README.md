@@ -190,6 +190,4 @@ dich --json inspect ./plugin.deb --with ./libcommon.deb
 
 ## License
 
-Licensed under either of:
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
+Licensed under the Apache License, Version 2.0. See [LICENSE-APACHE](LICENSE-APACHE).

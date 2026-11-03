@@ -22,6 +22,7 @@ The project roadmap requires:
 - Generate SPDX 2.3 from the locked `dich-cli` dependency graph with pinned `cargo-sbom`; package facts must not be hardcoded to a sample version.
 
 ### 2. Permissive License Standard
+- Dich's own source and documentation are licensed exclusively under Apache-2.0. The dependency allowlist below describes third-party components only and does not offer a second license for Dich.
 - All runtime dependencies must adhere to permissive OSI licenses (`MIT`, `Apache-2.0`, `BSD-3-Clause`, `ISC`, `Unicode-3.0`, `Zlib`), except Mozilla root-certificate data in the exact locked `webpki-roots` versions. That data uses `CDLA-Permissive-2.0`; its license text ships in the Dich `.deb`, and no other crate is granted this exception.
 - Copyleft licenses (GPL, LGPL, AGPL) are strictly forbidden in Dich binaries and libraries.
 

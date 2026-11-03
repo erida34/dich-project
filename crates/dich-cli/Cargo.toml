@@ -63,7 +63,6 @@ assets = [
   ["../../packaging/generated/completions/_dich", "usr/share/zsh/vendor-completions/", "644"],
   ["../../packaging/generated/completions/dich.fish", "usr/share/fish/vendor_completions.d/", "644"],
   ["../../README.md", "usr/share/doc/dich/README.md", "644"],
-  ["../../LICENSE-MIT", "usr/share/doc/dich/LICENSE-MIT", "644"],
   ["../../LICENSE-APACHE", "usr/share/doc/dich/LICENSE-APACHE", "644"],
   ["../../packaging/licenses/CDLA-Permissive-2.0.txt", "usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt", "644"],
 ]
