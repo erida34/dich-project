@@ -51,3 +51,5 @@ The core action-admission boundary (ADR 0013) denies all package execution and s
 Downgrade regression tests use a caller-supplied fixture baseline and Debian version ordering. The metadata planner does not read an installed profile or host package database and does not yet enforce a profile upgrade/downgrade policy.
 
 Experimental `.deb` inspection reads bounded common-ar/control/data tar streams, including gzip/xz/zstd through resource-limited helpers (ADR 0014); it performs no extraction, does not establish safe paths or links, and is not yet connected to trusted artifact fetch. It rejects extended records and non-regular/non-directory tar types. Other compression formats, links, special files and tar extensions remain unsupported; safe extraction is not implemented.
+
+Read-only `.deb` inspection additionally rejects absolute and parent paths, normalized duplicates, file/directory collisions, dangerous mode bits and link/special/extension records. These checks do not establish safe filesystem extraction; no extractor exists yet.

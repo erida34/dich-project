@@ -273,3 +273,102 @@ fn file_count_limit_applies_across_control_and_data() {
     };
     assert!(inspect_deb(&bytes, limits).is_err());
 }
+fn raw_tar(path: &[u8], mode: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    {
+        let mut builder = tar::Builder::new(&mut out);
+        let mut header = tar::Header::new_gnu();
+        header.as_mut_bytes()[..path.len()].copy_from_slice(path);
+        header.set_size(1);
+        header.set_mode(mode);
+        header.set_cksum();
+        builder.append(&header, &b"x"[..]).unwrap();
+        builder.finish().unwrap();
+    }
+    out
+}
+#[test]
+fn rejects_traversal_absolute_paths_and_dangerous_mode_bits() {
+    let control = tar_with_file("control", b"metadata");
+    for (path, mode) in [
+        (b"../escape".as_slice(), 0o644),
+        (b"/etc/evil".as_slice(), 0o644),
+        (b"usr/../../escape".as_slice(), 0o644),
+        (b"usr/bin/suid".as_slice(), 0o4755),
+    ] {
+        let data = raw_tar(path, mode);
+        let bytes = deb(&[
+            ("debian-binary", b"2.0\n"),
+            ("control.tar", &control),
+            ("data.tar", &data),
+        ]);
+        assert!(
+            inspect_deb(&bytes, Limits::default()).is_err(),
+            "accepted {:?}",
+            path
+        );
+    }
+}
+
+fn raw_entries(entries: &[(&[u8], tar::EntryType)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    {
+        let mut builder = tar::Builder::new(&mut out);
+        for (path, kind) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.as_mut_bytes()[..path.len()].copy_from_slice(path);
+            header.set_entry_type(*kind);
+            header.set_size(0);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder.append(&header, &[][..]).unwrap();
+        }
+        builder.finish().unwrap();
+    }
+    out
+}
+#[test]
+fn rejects_links_devices_extensions_and_ambiguous_paths() {
+    let control = tar_with_file("control", b"metadata");
+    for kind in [
+        tar::EntryType::Symlink,
+        tar::EntryType::Link,
+        tar::EntryType::Char,
+        tar::EntryType::Block,
+        tar::EntryType::Fifo,
+        tar::EntryType::XHeader,
+    ] {
+        let data = raw_entries(&[(b"bad", kind)]);
+        let bytes = deb(&[
+            ("debian-binary", b"2.0\n"),
+            ("control.tar", &control),
+            ("data.tar", &data),
+        ]);
+        assert!(
+            inspect_deb(&bytes, Limits::default()).is_err(),
+            "accepted {kind:?}"
+        );
+    }
+    for entries in [
+        vec![
+            (b"same".as_slice(), tar::EntryType::Regular),
+            (b"./same".as_slice(), tar::EntryType::Regular),
+        ],
+        vec![
+            (b"dir/file".as_slice(), tar::EntryType::Regular),
+            (b"dir".as_slice(), tar::EntryType::Regular),
+        ],
+        vec![
+            (b"dir".as_slice(), tar::EntryType::Regular),
+            (b"dir/file".as_slice(), tar::EntryType::Regular),
+        ],
+    ] {
+        let data = raw_entries(&entries);
+        let bytes = deb(&[
+            ("debian-binary", b"2.0\n"),
+            ("control.tar", &control),
+            ("data.tar", &data),
+        ]);
+        assert!(inspect_deb(&bytes, Limits::default()).is_err());
+    }
+}

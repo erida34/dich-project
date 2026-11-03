@@ -205,6 +205,7 @@ fn inspect_tar(
     let mut total = 0u64;
     let mut files = 0usize;
     let mut control_files = 0usize;
+    let mut paths: std::collections::BTreeMap<Vec<u8>, bool> = std::collections::BTreeMap::new();
     {
         let entries = archive
             .entries()
@@ -224,6 +225,31 @@ fn inspect_tar(
             if !(kind.is_file() || kind.is_dir()) {
                 return Err(DebError::Unsupported);
             }
+            let mode = entry.header().mode().map_err(|_| DebError::Malformed)?;
+            if mode & !0o777 != 0 {
+                return Err(DebError::Unsupported);
+            }
+            let normalized = normalize_path(&path, kind.is_dir())?;
+            if paths.contains_key(&normalized) {
+                return Err(DebError::Malformed);
+            }
+            for (index, byte) in normalized.iter().enumerate() {
+                if *byte == b'/' && paths.get(&normalized[..index]) == Some(&false) {
+                    return Err(DebError::Malformed);
+                }
+            }
+            if kind.is_file() {
+                let mut prefix = normalized.clone();
+                prefix.push(b'/');
+                if paths
+                    .range(prefix.clone()..)
+                    .next()
+                    .is_some_and(|(key, _)| key.starts_with(&prefix))
+                {
+                    return Err(DebError::Malformed);
+                }
+            }
+            paths.insert(normalized, kind.is_dir());
             if kind.is_file() {
                 files = files.checked_add(1).ok_or(DebError::Limit)?;
                 if files > limits.max_files {
@@ -262,6 +288,40 @@ fn inspect_tar(
         return Err(DebError::Malformed);
     }
     Ok((count, files, total))
+}
+
+fn normalize_path(path: &[u8], directory: bool) -> Result<Vec<u8>, DebError> {
+    if path.is_empty()
+        || path.first() == Some(&b'/')
+        || path.iter().any(|b| *b == b'\\' || b.is_ascii_control())
+        || std::str::from_utf8(path).is_err()
+    {
+        return Err(DebError::Unsupported);
+    }
+    let mut trimmed = path;
+    if trimmed.starts_with(b"./") {
+        trimmed = &trimmed[2..];
+    }
+    if trimmed.last() == Some(&b'/') {
+        if !directory {
+            return Err(DebError::Malformed);
+        }
+        trimmed = &trimmed[..trimmed.len() - 1];
+    }
+    if trimmed == b"." || trimmed.is_empty() {
+        return if directory {
+            Ok(Vec::new())
+        } else {
+            Err(DebError::Unsupported)
+        };
+    }
+    if trimmed
+        .split(|b| *b == b'/')
+        .any(|part| part.is_empty() || part == b"." || part == b"..")
+    {
+        return Err(DebError::Unsupported);
+    }
+    Ok(trimmed.to_vec())
 }
 
 #[cfg(not(target_os = "linux"))]
