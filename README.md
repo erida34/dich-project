@@ -2,7 +2,7 @@
 
 **Dich** — a version-aware, dependency-sharing package store for Debian and Ubuntu sources, written in Rust.
 
-> **Status: experimental.** The executable can list configured sources, update authenticated repository metadata and query the verified local cache. An experimental, limited metadata planner is available for one source, local archives can be examined as unverified data, and existing experimental stores can be listed or checked against local metadata; package installation, a complete Debian resolver, hard immutable storage and ABI relocation are not implemented. Do not use it as a production package manager.
+> **Status: experimental.** The executable can list configured sources, update authenticated repository metadata and query the verified local cache. An experimental, limited metadata planner is available for one source, exact artifacts can be downloaded to a verified cache, local archives can be examined as unverified data, and existing experimental stores can be listed or checked against local metadata; package installation, a complete Debian resolver, hard immutable storage and ABI relocation are not implemented. Do not use it as a production package manager.
 
 ## Vision
 
@@ -44,12 +44,19 @@ If the repository omits `Valid-Until`, `--allow-missing-valid-until` explicitly 
 dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 plan hello --distribution ubuntu --suite noble --architecture amd64
 ```
 
+To download one exact artifact from an already updated, authenticated cache with exactly one configured source, select its component and version explicitly:
+
+```sh
+dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 fetch hello --exact-version 1.0-1 --component main
+```
+
+The example version is illustrative; select a version actually present in the authenticated index. Downloading rechecks signatures and digests and writes only to the protected cache. It does not extract, publish into a store or establish installability. Successful live CLI download remains unverified in the current test environment.
+
 Plans are labeled `planned` and include signed-snapshot and artifact SHA256 identities in JSON, but are not installable and cannot yet be replayed as locks. The current resolver supports a narrow relationship subset and rejects, among other cases, most multiarch qualifiers and essential/required packages; it does not infer host packages. The result may therefore be `unsupported` even for ordinary packages such as `hello`. Pre-Depends cycles are conservatively rejected, and the displayed list is not an installation order. It does not check scripts, services or ABI compatibility. An existing protected experimental store created through library APIs can be inspected with `dich --store-dir /absolute/path/store store ls` and an exact object can be checked with `dich --store-dir /absolute/path/store store verify OBJECT_ID --kind archive` (or `--kind tree`). Listing reads metadata without checking contents; verification checks local metadata and bytes without refreshing repository signatures or proving compatibility. These commands do not initialize a store or migrate its schema. For bounded unauthenticated examination without extraction, run `dich inspect /absolute/path/package.deb`; this does not establish authenticity or installability. Symlinks and non-regular files are rejected. Remaining examples below show the *planned* package interface.
 
 ## Planned CLI
 
 ```text
-dich fetch libssl3@3.0
 dich install libssl3@3.0 --profile default
 dich profile list
 dich rollback --profile default

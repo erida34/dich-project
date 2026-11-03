@@ -741,3 +741,153 @@ fn resolver_loads_only_fresh_authenticated_cache_under_explicit_policy() {
             .is_err()
     );
 }
+
+#[test]
+fn exact_fetch_requires_signed_cached_index_and_verified_artifact() {
+    use crate::{IndexLimits, SnapshotJournal};
+    let (dir, authorized) = local_authorization("https://example.org/debian");
+    let source = authorized.release().source();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    let freshness =
+        FreshnessPolicy::new(Duration::from_secs(2 * 86400), Duration::ZERO, true).unwrap();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let mut update = Fake {
+        responses: VecDeque::from([
+            response(
+                200,
+                None,
+                include_bytes!("../tests/fixtures/index/InRelease"),
+            ),
+            response(
+                200,
+                None,
+                include_bytes!("../tests/fixtures/index/Packages.xz"),
+            ),
+        ]),
+        calls: vec![],
+    };
+    crate::update::update_with_transport(
+        source,
+        &journal,
+        freshness,
+        IndexLimits::default(),
+        &mut update,
+        || now,
+    )
+    .unwrap();
+    let mut fetch = Fake {
+        responses: VecDeque::from([response(
+            200,
+            None,
+            include_bytes!("../tests/fixtures/index/fixture.deb"),
+        )]),
+        calls: vec![],
+    };
+    let result = crate::fetch_exact::fetch_exact_with_transport(
+        source,
+        &journal,
+        freshness,
+        crate::FetchRequest {
+            component: "main",
+            name: "fixture",
+            version: "1.0-1",
+            max_bytes: 1024,
+        },
+        &mut fetch,
+        || now,
+    )
+    .unwrap();
+    assert_eq!(result.name(), "fixture");
+    assert_eq!(result.version(), "1.0-1");
+    assert_eq!(fetch.calls.len(), 1);
+    let mut bad = Fake {
+        responses: VecDeque::from([response(200, None, b"bad")]),
+        calls: vec![],
+    };
+    assert!(
+        crate::fetch_exact::fetch_exact_with_transport(
+            source,
+            &journal,
+            freshness,
+            crate::FetchRequest {
+                component: "main",
+                name: "fixture",
+                version: "1.0-1",
+                max_bytes: 1024
+            },
+            &mut bad,
+            || now
+        )
+        .is_err()
+    );
+    let mut missing = Fake {
+        responses: VecDeque::new(),
+        calls: vec![],
+    };
+    assert!(
+        crate::fetch_exact::fetch_exact_with_transport(
+            source,
+            &journal,
+            freshness,
+            crate::FetchRequest {
+                component: "main",
+                name: "fixture",
+                version: "99",
+                max_bytes: 1024
+            },
+            &mut missing,
+            || now
+        )
+        .is_err()
+    );
+    assert!(missing.calls.is_empty());
+    for (component, max_bytes, when) in [
+        ("main", 1, now),
+        ("unconfigured", 1024, now),
+        ("main", 1024, now + Duration::from_secs(3 * 86400)),
+    ] {
+        let mut blocked = Fake {
+            responses: VecDeque::new(),
+            calls: vec![],
+        };
+        assert!(
+            crate::fetch_exact::fetch_exact_with_transport(
+                source,
+                &journal,
+                freshness,
+                crate::FetchRequest {
+                    component,
+                    name: "fixture",
+                    version: "1.0-1",
+                    max_bytes
+                },
+                &mut blocked,
+                || when
+            )
+            .is_err()
+        );
+        assert!(blocked.calls.is_empty());
+    }
+    fs::write(source.keyring(), b"forged keyring").unwrap();
+    let mut forged = Fake {
+        responses: VecDeque::new(),
+        calls: vec![],
+    };
+    assert!(
+        crate::fetch_exact::fetch_exact_with_transport(
+            source,
+            &journal,
+            freshness,
+            crate::FetchRequest {
+                component: "main",
+                name: "fixture",
+                version: "1.0-1",
+                max_bytes: 1024
+            },
+            &mut forged,
+            || now
+        )
+        .is_err()
+    );
+    assert!(forged.calls.is_empty());
+}

@@ -71,3 +71,5 @@ Stored tree files use mode 0400 and directories 0700; archives use 0400. This is
 The experimental `store ls` output is metadata only. `store verify` checks one object against protected local metadata, not against a freshly verified repository snapshot or ABI policy. Both commands require an existing current-schema store and an exclusive lock; SQLite may create or recover WAL sidecars. They do not initialize, migrate or activate a store.
 
 `dich inspect FILE` treats the file as unauthenticated input, reads a bounded regular file without following symlinks, does not extract or execute package scripts, and does not claim installability. It rejects FIFO/device inputs and unsupported archive forms.
+
+Experimental `fetch` requires an exact version, component, one configured source and explicit freshness policy. It reauthenticates cached signed Release/index metadata and verifies the downloaded size and SHA256 before and after cache publication. Successful live CLI download remains unverified in the current environment; downloaded does not mean installable.

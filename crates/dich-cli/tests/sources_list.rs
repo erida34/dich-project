@@ -295,6 +295,33 @@ fn cached_query_cli_outputs_authenticated_fixture_offline() {
             serde_json::json!({"schema_version":1,"status":"completed","records":[{"name":"fixture","version":"1.0-1","architecture":"amd64","source":"https://example.org/debian","suite":"bookworm"}]})
         );
     }
+    for (name, version, max_bytes) in [("fixture", "1.0-1", "1"), ("fixture", "99", "1024")] {
+        let output = Command::new(env!("CARGO_BIN_EXE_dich"))
+            .args([
+                "--json",
+                "--config",
+                config.to_str().unwrap(),
+                "--cache",
+                cache_dir.to_str().unwrap(),
+                "--max-age-seconds",
+                "86400",
+                "--allow-missing-valid-until",
+                "fetch",
+                name,
+                "--exact-version",
+                version,
+                "--component",
+                "main",
+                "--max-bytes",
+                max_bytes,
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["error"]["code"], "fetch_failed");
+    }
 }
 
 #[test]

@@ -604,7 +604,7 @@ impl SnapshotJournal {
         self.load_artifact_with_clock(authorized, || now)
     }
 
-    fn store_artifact_with_clock(
+    pub(crate) fn store_artifact_with_clock(
         &self,
         authorized: &AuthorizedArtifact,
         mut verified: VerifiedArtifact,
@@ -682,7 +682,7 @@ impl SnapshotJournal {
         result
     }
 
-    fn load_artifact_with_clock(
+    pub(crate) fn load_artifact_with_clock(
         &self,
         authorized: &AuthorizedArtifact,
         clock: impl Fn() -> SystemTime,

@@ -1,0 +1,84 @@
+//! Exact artifact download through authenticated cached Release and Packages metadata.
+use crate::cache::FailurePoint;
+use crate::transport::{HttpsTransport, Transport};
+use crate::{
+    FreshnessPolicy, IndexLimits, IndexedArtifact, SnapshotJournal, Source, authorize_artifact,
+    choose_index_format, select_indexed_artifact,
+};
+use std::{error::Error, fmt, time::SystemTime};
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchExactError {
+    Metadata,
+    Artifact,
+    Cache,
+}
+impl fmt::Display for FetchExactError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "exact artifact fetch failed: {self:?}")
+    }
+}
+impl Error for FetchExactError {}
+#[derive(Debug, Clone, Copy)]
+pub struct FetchRequest<'a> {
+    pub component: &'a str,
+    pub name: &'a str,
+    pub version: &'a str,
+    pub max_bytes: u64,
+}
+/// Download an exact indexed artifact and publish it into the protected verified cache.
+pub fn fetch_exact(
+    source: &Source,
+    journal: &SnapshotJournal,
+    policy: FreshnessPolicy,
+    request: FetchRequest<'_>,
+) -> Result<IndexedArtifact, FetchExactError> {
+    fetch_exact_with_transport(
+        source,
+        journal,
+        policy,
+        request,
+        &mut HttpsTransport::new(),
+        SystemTime::now,
+    )
+}
+pub(crate) fn fetch_exact_with_transport(
+    source: &Source,
+    journal: &SnapshotJournal,
+    policy: FreshnessPolicy,
+    request: FetchRequest<'_>,
+    transport: &mut impl Transport,
+    clock: impl Fn() -> SystemTime + Copy,
+) -> Result<IndexedArtifact, FetchExactError> {
+    if request.max_bytes == 0 || request.max_bytes > 256 * 1024 * 1024 {
+        return Err(FetchExactError::Artifact);
+    }
+    let release = journal
+        .load_release_with_clock(source, policy, clock)
+        .map_err(|_| FetchExactError::Metadata)?;
+    let format =
+        choose_index_format(&release, request.component).map_err(|_| FetchExactError::Metadata)?;
+    let (release, index) = journal
+        .load_index_with_clock(
+            source,
+            policy,
+            request.component,
+            format,
+            IndexLimits::default(),
+            clock,
+        )
+        .map_err(|_| FetchExactError::Metadata)?;
+    let artifact = select_indexed_artifact(&index, request.name, request.version)
+        .map_err(|_| FetchExactError::Metadata)?;
+    let authorized =
+        authorize_artifact(&release, &artifact, clock()).map_err(|_| FetchExactError::Metadata)?;
+    let verified = journal
+        .fetch_with_transport(&authorized, request.max_bytes, transport, clock)
+        .map_err(|_| FetchExactError::Artifact)?;
+    journal
+        .store_artifact_with_clock(&authorized, verified, FailurePoint::None, clock)
+        .map_err(|_| FetchExactError::Cache)?;
+    journal
+        .load_artifact_with_clock(&authorized, clock)
+        .map_err(|_| FetchExactError::Cache)?;
+    Ok(artifact)
+}

@@ -52,8 +52,19 @@ pub enum Commands {
         #[arg(long)]
         architecture: String,
     },
-    /// Download a verified package (planned)
-    Fetch { package: String },
+    /// Download one exact package into the authenticated cache (does not install)
+    Fetch {
+        package: String,
+        /// Exact Debian package version
+        #[arg(long)]
+        exact_version: String,
+        /// Explicit configured repository component
+        #[arg(long)]
+        component: String,
+        /// Maximum downloaded bytes (at most 256 MiB)
+        #[arg(long, default_value_t = 64 * 1024 * 1024)]
+        max_bytes: u64,
+    },
     /// Examine an unauthenticated local Debian archive without extracting it
     Inspect { file: String },
     /// Install compatible packages into a profile (planned)
@@ -438,6 +449,94 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 Err(CliError {
                     code: "unsupported_platform",
                     message: "repository update requires Linux",
+                    trace: Vec::new(),
+                })
+            }
+        }
+        Commands::Fetch {
+            package,
+            exact_version,
+            component,
+            max_bytes,
+        } => {
+            #[cfg(target_os = "linux")]
+            {
+                let age = cli.max_age_seconds.ok_or(CliError {
+                    code: "freshness_policy_required",
+                    message: "specify --max-age-seconds explicitly",
+                    trace: Vec::new(),
+                })?;
+                let freshness = dich_apt::FreshnessPolicy::new(
+                    std::time::Duration::from_secs(age),
+                    std::time::Duration::from_secs(300),
+                    !cli.allow_missing_valid_until,
+                )
+                .map_err(|_| CliError {
+                    code: "invalid_freshness_policy",
+                    message: "invalid metadata freshness policy",
+                    trace: Vec::new(),
+                })?;
+                let sources =
+                    dich_apt::load_configured_sources(&cli.config).map_err(|_| CliError {
+                        code: "source_load_failed",
+                        message: "could not load trusted source configuration",
+                        trace: Vec::new(),
+                    })?;
+                if sources.len() != 1 {
+                    return Err(CliError {
+                        code: "unsupported_sources",
+                        message: "fetch currently requires exactly one configured source",
+                        trace: Vec::new(),
+                    });
+                }
+                let journal =
+                    dich_apt::SnapshotJournal::open(&cli.cache).map_err(|_| CliError {
+                        code: "cache_open_failed",
+                        message: "could not open protected cache directory",
+                        trace: Vec::new(),
+                    })?;
+                let request = dich_apt::FetchRequest {
+                    component: &component,
+                    name: &package,
+                    version: &exact_version,
+                    max_bytes,
+                };
+                let artifact=dich_apt::fetch_exact(&sources[0],&journal,freshness,request).map_err(|_| CliError { code:"fetch_failed",message:"could not authenticate, download and cache the requested artifact",trace:Vec::new() })?;
+                let artifact_hash = artifact
+                    .sha256()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>();
+                let release_hash = artifact
+                    .release_sha256()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>();
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"schema_version":1,"status":"completed","state":"downloaded","installable":false,"name":artifact.name(),"version":artifact.version(),"architecture":artifact.architecture(),"size":artifact.size(),"artifact_sha256":artifact_hash,"release_sha256":release_hash,"component":component})
+                    );
+                } else {
+                    println!(
+                        "completed: downloaded {}={} ({}, {} bytes) to verified cache; installability not established",
+                        artifact.name(),
+                        artifact.version(),
+                        artifact.architecture(),
+                        artifact.size()
+                    );
+                    println!(
+                        "artifact sha256: {artifact_hash}; signed Release sha256: {release_hash}"
+                    );
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (package, exact_version, component, max_bytes);
+                Err(CliError {
+                    code: "unsupported_platform",
+                    message: "authenticated fetch requires Linux",
                     trace: Vec::new(),
                 })
             }
