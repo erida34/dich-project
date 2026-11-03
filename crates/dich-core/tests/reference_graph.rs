@@ -64,3 +64,45 @@ fn single_root_has_stable_domain_separated_encoding() {
     expected.extend_from_slice(&0u32.to_be_bytes());
     assert_eq!(graph.canonical(), expected);
 }
+
+#[test]
+fn canonical_graph_round_trips_and_rejects_corrupt_encodings() {
+    let (a, b) = (id('a'), id('b'));
+    let graph = ReferenceGraph::new(&[&a], &[(&a, &b)]).unwrap();
+    assert_eq!(
+        ReferenceGraph::from_canonical(graph.canonical()).unwrap(),
+        graph
+    );
+    for bad in [
+        graph.canonical()[..graph.canonical().len() - 1].to_vec(),
+        {
+            let mut b = graph.canonical().to_vec();
+            b.push(0);
+            b
+        },
+        {
+            let mut b = graph.canonical().to_vec();
+            b[0] = 0;
+            b
+        },
+        {
+            let mut b = graph.canonical().to_vec();
+            let off = b"dich.reference-graph\0v1\0".len();
+            b[off..off + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+            b
+        },
+    ] {
+        assert!(ReferenceGraph::from_canonical(&bad).is_err());
+    }
+}
+#[test]
+fn canonical_graph_rejects_noncanonical_root_order() {
+    let (a, b) = (id('a'), id('b'));
+    let graph = ReferenceGraph::new(&[&a, &b], &[]).unwrap();
+    let mut bytes = graph.canonical().to_vec();
+    let off = b"dich.reference-graph\0v1\0".len() + 4;
+    for i in 0..64 {
+        bytes.swap(off + i, off + 64 + i);
+    }
+    assert!(ReferenceGraph::from_canonical(&bytes).is_err());
+}

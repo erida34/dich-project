@@ -10,6 +10,7 @@ const MAX_EDGES: usize = 40_000;
 pub enum GraphError {
     MissingRoot,
     InvalidId,
+    InvalidEncoding,
     Duplicate,
     SelfEdge,
     Disconnected,
@@ -104,6 +105,58 @@ impl ReferenceGraph {
             nodes: nodes.into_iter().map(str::to_owned).collect(),
             canonical,
         })
+    }
+    /// Decode only an exact canonical representation; hostile inputs are bounded.
+    pub fn from_canonical(bytes: &[u8]) -> Result<Self, GraphError> {
+        use std::io::{Cursor, Read};
+        const PREFIX: &[u8] = b"dich.reference-graph\0v1\0";
+        if !bytes.starts_with(PREFIX)
+            || bytes.len() > PREFIX.len() + 8 + MAX_NODES * 64 + MAX_EDGES * 128
+        {
+            return Err(GraphError::InvalidEncoding);
+        }
+        fn read_count(c: &mut Cursor<&[u8]>) -> Result<usize, GraphError> {
+            let mut b = [0; 4];
+            c.read_exact(&mut b)
+                .map_err(|_| GraphError::InvalidEncoding)?;
+            Ok(u32::from_be_bytes(b) as usize)
+        }
+        fn read_id(c: &mut Cursor<&[u8]>) -> Result<String, GraphError> {
+            let mut b = [0; 64];
+            c.read_exact(&mut b)
+                .map_err(|_| GraphError::InvalidEncoding)?;
+            String::from_utf8(b.to_vec()).map_err(|_| GraphError::InvalidEncoding)
+        }
+        let mut c = Cursor::new(&bytes[PREFIX.len()..]);
+        let roots_count = read_count(&mut c)?;
+        if roots_count == 0 || roots_count > MAX_NODES {
+            return Err(GraphError::InvalidEncoding);
+        }
+        let mut roots = Vec::with_capacity(roots_count);
+        for _ in 0..roots_count {
+            roots.push(read_id(&mut c)?);
+        }
+        let edge_count = read_count(&mut c)?;
+        if edge_count > MAX_EDGES {
+            return Err(GraphError::InvalidEncoding);
+        }
+        let mut edges = Vec::with_capacity(edge_count);
+        for _ in 0..edge_count {
+            edges.push((read_id(&mut c)?, read_id(&mut c)?));
+        }
+        if c.position() != (bytes.len() - PREFIX.len()) as u64 {
+            return Err(GraphError::InvalidEncoding);
+        }
+        let roots_ref: Vec<_> = roots.iter().map(String::as_str).collect();
+        let edges_ref: Vec<_> = edges
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let result = Self::new(&roots_ref, &edges_ref)?;
+        if result.canonical != bytes {
+            return Err(GraphError::InvalidEncoding);
+        }
+        Ok(result)
     }
     pub fn roots(&self) -> &[String] {
         &self.roots

@@ -1384,8 +1384,9 @@ mod tree_tests {
         use dich_core::reference_graph::ReferenceGraph;
         let (_root, mut db, identity, stage) = fixture();
         let (_unused_root, _unused_db, mut other, _unused_stage) = fixture();
-        other.digest[0] ^= 1;
-        other.canonical.push(1);
+        let position = b"dich.store.identity\0v1\0".len() + 4;
+        other.canonical[position] ^= 1;
+        other.digest = Sha256::digest(&other.canonical).into();
         publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
         publish_tree_for_test(&mut db, &other, &stage, FailurePoint::None).unwrap();
         let (a, b) = (identity.hex(), other.hex());
@@ -1576,5 +1577,46 @@ mod tree_tests {
             5
         );
         assert!(db.verify_tree_object(&id).is_err());
+    }
+    #[test]
+    fn reference_graph_readback_checks_identity_and_membership() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let (_root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let id = identity.hex();
+        let graph = ReferenceGraph::new(&[&id], &[]).unwrap();
+        let (graph_id, _) = db.put_reference_graph(&graph).unwrap();
+        assert_eq!(db.read_reference_graph(&graph_id).unwrap(), graph);
+        assert!(db.read_reference_graph("../bad").is_err());
+        db.connection
+            .execute(
+                "DELETE FROM reference_members WHERE graph_id = ?1",
+                [&graph_id],
+            )
+            .unwrap();
+        assert!(db.read_reference_graph(&graph_id).is_err());
+        db.connection
+            .execute(
+                "UPDATE reference_graphs SET manifest = ?1 WHERE graph_id = ?2",
+                rusqlite::params![b"bad".as_slice(), graph_id],
+            )
+            .unwrap();
+        assert!(db.read_reference_graph(&graph_id).is_err());
+    }
+    #[test]
+    fn graph_creation_rejects_corrupt_tree_identity_metadata() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let (_root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let id = identity.hex();
+        db.connection
+            .execute(
+                "UPDATE verified_trees SET manifest = ?1 WHERE object_id = ?2",
+                rusqlite::params![b"bad".as_slice(), id],
+            )
+            .unwrap();
+        let graph = ReferenceGraph::new(&[&identity.hex()], &[]).unwrap();
+        assert!(db.put_reference_graph(&graph).is_err());
+        assert_eq!(db.test_graph_count(), 0);
     }
 }
