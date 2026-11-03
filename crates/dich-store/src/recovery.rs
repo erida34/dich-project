@@ -245,3 +245,49 @@ impl MetadataDb {
         Ok(())
     }
 }
+
+/// Kind of unreferenced publication to remove explicitly.
+#[derive(Debug, Clone, Copy)]
+pub enum OrphanKind {
+    Archive,
+    Tree,
+}
+impl MetadataDb {
+    /// Remove one unreferenced object. The lock protects the metadata check and removal.
+    /// This is not garbage collection; future reference types must be checked before extending it.
+    pub fn remove_orphan(&mut self, id: &str, kind: OrphanKind) -> Result<(), PublicationError> {
+        if !valid_hex(id, 64) {
+            return Err(PublicationError::UnsafePath);
+        }
+        let count: i64 = self.connection.query_row(
+            "SELECT (SELECT count(*) FROM verified_archives WHERE object_id = ?1) + (SELECT count(*) FROM verified_trees WHERE object_id = ?1)",
+            [id], |row| row.get(0)).map_err(|_| PublicationError::Database)?;
+        if count != 0 {
+            return Err(PublicationError::Integrity);
+        }
+        let objects = private_dir(&self.root, "objects")?;
+        let tree = matches!(kind, OrphanKind::Tree);
+        let name = format!("{id}.{}", if tree { "tree" } else { "deb" });
+        let fd = open_child(&objects, &name, tree)?;
+        let device = fs::fstat(&objects)
+            .map_err(|_| PublicationError::Io)?
+            .st_dev;
+        check_entry(&fd, tree, device)?;
+        if tree {
+            visit(&fd, device, 0, &mut 35_000, false)?;
+            visit(&fd, device, 0, &mut 35_000, true)?;
+        }
+        fs::unlinkat(
+            &objects,
+            name.as_str(),
+            if tree {
+                AtFlags::REMOVEDIR
+            } else {
+                AtFlags::empty()
+            },
+        )
+        .map_err(|_| PublicationError::Io)?;
+        fs::fsync(&objects).map_err(|_| PublicationError::Io)?;
+        Ok(())
+    }
+}

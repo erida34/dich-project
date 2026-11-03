@@ -14,7 +14,7 @@ pub use metadata::{MetadataDb, MetadataError};
 #[cfg(target_os = "linux")]
 pub use publication::{PublicationError, PublicationOutcome};
 #[cfg(target_os = "linux")]
-pub use recovery::RecoveryInventory;
+pub use recovery::{OrphanKind, RecoveryInventory};
 #[cfg(target_os = "linux")]
 pub use tree::TreeOutcome;
 
@@ -1046,5 +1046,61 @@ mod tree_tests {
         let mut db = MetadataDb::open(root.path()).unwrap();
         db.remove_staged(&name).unwrap();
         assert!(db.recovery_inventory().unwrap().staged.is_empty());
+    }
+    #[test]
+    fn orphan_cleanup_refuses_committed_objects_and_removes_only_unreferenced() {
+        let (_root, mut db, identity, stage) = fixture();
+        assert!(
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::AfterRename).is_err()
+        );
+        assert_eq!(
+            db.recovery_inventory().unwrap().orphan_trees,
+            vec![identity.hex()]
+        );
+        db.remove_orphan(&identity.hex(), crate::OrphanKind::Tree)
+            .unwrap();
+        assert!(db.recovery_inventory().unwrap().orphan_trees.is_empty());
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        assert!(
+            db.remove_orphan(&identity.hex(), crate::OrphanKind::Tree)
+                .is_err()
+        );
+        assert!(publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).is_ok());
+        assert!(
+            db.remove_orphan("../invalid", crate::OrphanKind::Tree)
+                .is_err()
+        );
+    }
+    #[test]
+    fn orphan_cleanup_refuses_symlinks_and_hardlinked_archives() {
+        use std::os::unix::fs::symlink;
+        let (root, mut db, identity, stage) = fixture();
+        std::fs::create_dir(root.path().join("objects")).unwrap();
+        std::fs::set_permissions(
+            root.path().join("objects"),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        let target = stage.root.path().join("usr/file");
+        let link = root
+            .path()
+            .join("objects")
+            .join(format!("{}.tree", identity.hex()));
+        symlink(stage.root.path(), &link).unwrap();
+        assert!(
+            db.remove_orphan(&identity.hex(), crate::OrphanKind::Tree)
+                .is_err()
+        );
+        let archive = root
+            .path()
+            .join("objects")
+            .join(format!("{}.deb", identity.hex()));
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o400)).unwrap();
+        std::fs::hard_link(&target, archive).unwrap();
+        assert!(
+            db.remove_orphan(&identity.hex(), crate::OrphanKind::Archive)
+                .is_err()
+        );
+        assert_eq!(std::fs::read(target).unwrap(), b"hello");
     }
 }
