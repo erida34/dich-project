@@ -1,6 +1,6 @@
 # ADR 0011 — Resolver search boundary (work in progress)
 
-Status: Proposed.
+Status: Accepted for the bounded metadata-only subset; broader Debian semantics remain open.
 
 A deterministic bounded backtracking engine operates on opaque candidate identities and requirements supplied by a provider. The provider must return matching candidates in explicit deterministic preference order, declare pairwise incompatibility, supply each candidate's requirements, and reject unsupported semantics before planning. The engine never reads dpkg state and cannot establish repository authenticity or ABI compatibility; an APT adapter must build its input exclusively from reauthenticated, fresh, policy-matched indices. Search exhaustion and resource limits have distinct errors; neither may be reported as a valid plan. Cycles may be satisfied by already selected candidates, but Cycles involving Pre-Depends are conservatively rejected; activation ordering is not implemented. The initial CLI must label a result as a plan, never an installation or compatibility guarantee. Candidate provenance and immutable lock/plan identity remain the following roadmap item.
 
