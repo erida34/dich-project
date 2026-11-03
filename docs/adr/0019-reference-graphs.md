@@ -1,4 +1,4 @@
-# ADR 0019 — Immutable reference graph snapshots (proposed)
+# ADR 0019 â€” Immutable reference graph snapshots (proposed)
 
 Status: Accepted for experimental library-only graph snapshots.
 
