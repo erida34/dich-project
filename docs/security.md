@@ -49,3 +49,5 @@ Experimental plans contain authenticated Release and artifact identities, but ar
 The core action-admission boundary (ADR 0013) denies all package execution and store mutation, including when evidence is empty or unexamined. It enumerates prohibited action classes but does not yet inspect `.deb` contents; real script/trigger/service/kernel detection and trusted evidence binding remain future work. CLI mutation commands return unsupported before executing package data.
 
 Downgrade regression tests use a caller-supplied fixture baseline and Debian version ordering. The metadata planner does not read an installed profile or host package database and does not yet enforce a profile upgrade/downgrade policy.
+
+Experimental `.deb` inspection reads only bounded uncompressed common-ar/control/data tar streams (ADR 0014); it performs no extraction, does not establish safe paths or links, and is not yet connected to trusted artifact fetch. It rejects extended records and non-regular/non-directory tar types. Compressed package members remain unsupported.

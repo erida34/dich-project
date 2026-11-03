@@ -1,0 +1,7 @@
+# ADR 0014 — Bounded Debian archive inspection
+
+Status: Proposed; implementation in progress.
+
+A `.deb` is untrusted even when its transport hash is authenticated. Before handing a bounded in-memory ar archive to the `ar` crate, preflight common-format headers and lengths to reject GNU/BSD extended names and oversized allocations; accept exactly `debian-binary`, one control tar member and one data tar member in order. Reject unsupported variants, compression and extensions until explicitly implemented. Read tar entries using the patched `tar` crate in raw mode and reject extension records we do not understand. Enforce input size, entry count, total declared file bytes, individual size, path length and depth; consume each entry to detect truncation. Archive inspection performs no extraction, scripts, privilege changes or compatibility decisions. The next extraction milestone must separately address paths, links and filesystem races and must not infer security from inspection alone.
+
+The tar dependency must be at least 0.4.45 to address [RUSTSEC-2026-0067](https://rustsec.org/advisories/RUSTSEC-2026-0067.html) and [RUSTSEC-2026-0068](https://rustsec.org/advisories/RUSTSEC-2026-0068.html); no `tar` unpack API is used. Debian archive format reference: [deb(5)](https://manpages.debian.org/trixie/dpkg-dev/deb.5.en.html).
