@@ -45,4 +45,4 @@ An internal repository-grounded review is recorded in [`dich-project-threat-mode
 - Beta testers have a clear framework for exercising Dich safely and reporting issues effectively.
 - Triage priorities ensure security and integrity defects receive immediate attention.
 - Users are not misled by false assumptions regarding arbitrary `.deb` compatibility.
-- External beta recruitment must wait until a private vulnerability-reporting route is confirmed; `SECURITY.md` currently records that no dedicated contact is configured.
+- GitHub private vulnerability reporting is enabled, so beta recruitment has a private disclosure route; `SECURITY.md` records that no separate maintainer email is configured.
