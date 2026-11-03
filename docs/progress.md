@@ -169,6 +169,8 @@
 
 - 2026-11-03: After the repository was published, its default branch was confirmed as `master`, while CI push events only matched `main`; GitHub Actions consequently showed zero runs. Updated the CI push filter to include both `main` and `master`. Next: push this trigger correction and inspect the hosted run; release gates remain open until it completes.
 
+- 2026-11-03: Hosted CI started after the `master` trigger fix but immediately rejected two invalid action commit refs for `cargo-deny-action` and `audit-check`. Resolved both tags to their actual immutable upstream commits and verified each commit contains an `action.yml`; corrected refs in CI and release workflows. The package smoke job from the first run was still progressing. Next: push valid action pins and inspect the rerun.
+
 
 
 
