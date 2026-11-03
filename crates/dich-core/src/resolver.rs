@@ -1,6 +1,12 @@
 //! Bounded generic search engine; providers must enforce package semantics and trust.
 use std::fmt::Debug;
 
+#[derive(Debug)]
+pub enum ValidationError {
+    Unsupported(String),
+    Limit,
+}
+
 pub trait Provider {
     type Candidate: Clone + Eq + Debug;
     type Requirement: Clone + Debug;
@@ -12,6 +18,10 @@ pub trait Provider {
     }
     fn requirements(&self, candidate: &Self::Candidate) -> Vec<Self::Requirement>;
     fn incompatible(&self, left: &Self::Candidate, right: &Self::Candidate) -> bool;
+    /// Reject a completed selection if the provider cannot safely interpret it.
+    fn validate_solution(&self, _selected: &[Self::Candidate]) -> Result<(), ValidationError> {
+        Ok(())
+    }
     fn describe_candidate(&self, candidate: &Self::Candidate) -> String {
         format!("{candidate:?}")
     }
@@ -103,6 +113,15 @@ impl<P: Provider> Search<'_, P> {
             return Err(ResolveError::LimitExceeded);
         }
         if pending.is_empty() {
+            match self.provider.validate_solution(&selected) {
+                Ok(()) => (),
+                Err(ValidationError::Limit) => return Err(ResolveError::LimitExceeded),
+                Err(ValidationError::Unsupported(reason)) => {
+                    self.unsupported_seen = true;
+                    self.note(reason);
+                    return Ok(None);
+                }
+            }
             return Ok(Some(selected));
         }
         let requirement = pending.remove(0);

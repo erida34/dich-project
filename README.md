@@ -44,7 +44,7 @@ If the repository omits `Valid-Until`, `--allow-missing-valid-until` explicitly 
 dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 plan hello --distribution ubuntu --suite noble --architecture amd64
 ```
 
-Plans are labeled `planned` and are not installable or pinned to artifacts. The current resolver supports a narrow relationship subset and rejects, among other cases, Pre-Depends, most multiarch qualifiers and essential/required packages; it does not infer host packages. The result may therefore be `unsupported` even for ordinary packages such as `hello`. It does not check scripts, services or ABI compatibility. Remaining examples below show the *planned* package interface.
+Plans are labeled `planned` and are not installable or pinned to artifacts. The current resolver supports a narrow relationship subset and rejects, among other cases, most multiarch qualifiers and essential/required packages; it does not infer host packages. The result may therefore be `unsupported` even for ordinary packages such as `hello`. Pre-Depends cycles are conservatively rejected, and the displayed list is not an installation order. It does not check scripts, services or ABI compatibility. Remaining examples below show the *planned* package interface.
 
 ## Planned CLI
 

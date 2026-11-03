@@ -3,7 +3,7 @@ use crate::{
     Comparison, ControlStanza, DebianVersion, DependencyGroup, DependencyRelation, MultiArch,
     PackageRelations, SystemBoundary, parse_dependencies,
 };
-use dich_core::resolver::Provider;
+use dich_core::resolver::{Provider, ValidationError};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +59,7 @@ impl DebianUniverse {
             let simple_depends = relations
                 .depends()
                 .iter()
+                .chain(relations.pre_depends())
                 .flat_map(|g| g.alternatives())
                 .all(|r| {
                     matches!(r.qualifier(), None | Some("any"))
@@ -66,7 +67,6 @@ impl DebianUniverse {
                         && r.profiles().is_empty()
                 });
             let supported = (arch == architecture || arch == "all")
-                && relations.pre_depends().is_empty()
                 && relations.system_boundary() == SystemBoundary::Ordinary
                 && !(arch == "all" && relations.multi_arch() == MultiArch::Same)
                 && simple_depends
@@ -225,10 +225,79 @@ impl Provider for DebianUniverse {
         };
         candidate
             .relations
-            .depends()
+            .pre_depends()
             .iter()
+            .chain(candidate.relations.depends())
             .map(|group| Requirement(group.alternatives().to_vec()))
             .collect()
+    }
+    fn validate_solution(&self, selected: &[usize]) -> Result<(), ValidationError> {
+        let mut edges: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); selected.len()];
+        let mut pre_edges = BTreeSet::new();
+        let mut checks = 0usize;
+        for (from, id) in selected.iter().enumerate() {
+            let candidate = self
+                .candidates
+                .get(*id)
+                .ok_or_else(|| ValidationError::Unsupported("invalid candidate".into()))?;
+            for (is_pre, group) in candidate
+                .relations
+                .pre_depends()
+                .iter()
+                .map(|g| (true, g))
+                .chain(candidate.relations.depends().iter().map(|g| (false, g)))
+            {
+                let mut found = false;
+                for (to, selected_id) in selected.iter().enumerate() {
+                    checks += 1;
+                    if checks > 10_000 {
+                        return Err(ValidationError::Limit);
+                    }
+                    let target = self
+                        .candidates
+                        .get(*selected_id)
+                        .ok_or_else(|| ValidationError::Unsupported("invalid candidate".into()))?;
+                    if group
+                        .alternatives()
+                        .iter()
+                        .any(|r| dependency_matches(target, r))
+                    {
+                        found = true;
+                        edges[from].insert(to);
+                        if is_pre {
+                            pre_edges.insert((from, to));
+                        }
+                    }
+                }
+                if !found {
+                    return Err(ValidationError::Unsupported(
+                        "selected package has an unsatisfied dependency".into(),
+                    ));
+                }
+            }
+        }
+        let mut traversal_steps = 0usize;
+        for (from, to) in pre_edges {
+            let mut visited = BTreeSet::new();
+            let mut pending = vec![to];
+            while let Some(node) = pending.pop() {
+                traversal_steps += 1;
+                if traversal_steps > 100_000 {
+                    return Err(ValidationError::Limit);
+                }
+                if node == from {
+                    return Err(ValidationError::Unsupported(format!(
+                        "unsupported Pre-Depends cycle involving {}",
+                        self.label(selected[from])
+                            .unwrap_or_else(|| "invalid candidate".into())
+                    )));
+                }
+                if visited.insert(node) {
+                    pending.extend(edges[node].iter().copied());
+                }
+            }
+        }
+        Ok(())
     }
     fn describe_candidate(&self, candidate: &usize) -> String {
         self.label(*candidate)

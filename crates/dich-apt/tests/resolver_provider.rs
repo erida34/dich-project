@@ -99,7 +99,7 @@ fn excessive_candidate_alternatives_stop_with_limit_instead_of_partial_plan() {
 fn unsupported_candidate_is_not_reported_as_proven_unsatisfiable() {
     use dich_core::resolver::ResolveError;
     let stanzas = parse_control_stanzas(
-        b"Package: root\nVersion: 1\nArchitecture: amd64\nPre-Depends: libc6\n",
+        b"Package: root\nVersion: 1\nArchitecture: amd64\nPre-Depends: libc6:native\n",
     )
     .unwrap();
     let universe = DebianUniverse::from_stanzas(&stanzas, "amd64").unwrap();
@@ -217,4 +217,82 @@ fn any_qualified_direct_package_uses_real_version_not_its_self_provide() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn predepends_are_resolved_and_cycles_with_predepends_rejected() {
+    use dich_core::resolver::ResolveError;
+    let ok = b"Package: root\nVersion: 1\nArchitecture: amd64\nPre-Depends: library\n\nPackage: library\nVersion: 1\nArchitecture: amd64\n";
+    let cyclic = b"Package: root\nVersion: 1\nArchitecture: amd64\nPre-Depends: library\n\nPackage: library\nVersion: 1\nArchitecture: amd64\nDepends: root\n";
+    let plain_cycle = b"Package: root\nVersion: 1\nArchitecture: amd64\nDepends: library\n\nPackage: library\nVersion: 1\nArchitecture: amd64\nDepends: root\n";
+    for (fixture, should_succeed) in [
+        (ok.as_slice(), true),
+        (cyclic.as_slice(), false),
+        (plain_cycle.as_slice(), true),
+    ] {
+        let universe =
+            DebianUniverse::from_stanzas(&parse_control_stanzas(fixture).unwrap(), "amd64")
+                .unwrap();
+        let result = resolve(
+            &universe,
+            vec![universe.require("root").unwrap()],
+            SearchLimits::default(),
+        );
+        if should_succeed {
+            assert_eq!(result.unwrap().selected.len(), 2);
+        } else {
+            assert!(matches!(result, Err(ResolveError::Unsupported { .. })));
+        }
+    }
+}
+
+#[test]
+fn predepends_cycle_backtracks_to_acyclic_alternative() {
+    let fixture = b"Package: root\nVersion: 1\nArchitecture: amd64\nPre-Depends: bad | good\n\nPackage: bad\nVersion: 1\nArchitecture: amd64\nDepends: root\n\nPackage: good\nVersion: 1\nArchitecture: amd64\n";
+    let universe =
+        DebianUniverse::from_stanzas(&parse_control_stanzas(fixture).unwrap(), "amd64").unwrap();
+    let result = resolve(
+        &universe,
+        vec![universe.require("root").unwrap()],
+        SearchLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        result
+            .selected
+            .iter()
+            .map(|id| universe.label(*id).unwrap())
+            .collect::<Vec<_>>(),
+        vec!["root=1", "good=1"]
+    );
+    assert!(
+        result
+            .trace
+            .iter()
+            .any(|event| event.contains("Pre-Depends cycle"))
+    );
+}
+
+#[test]
+fn predepends_graph_validation_has_a_hard_work_limit() {
+    use dich_core::resolver::ResolveError;
+    let mut fixture = String::new();
+    for i in 0..102 {
+        fixture.push_str(&format!("Package: p{i}\nVersion: 1\nArchitecture: amd64\n"));
+        if i < 101 {
+            fixture.push_str(&format!("Depends: p{}\n", i + 1));
+        }
+        fixture.push('\n');
+    }
+    let universe =
+        DebianUniverse::from_stanzas(&parse_control_stanzas(fixture.as_bytes()).unwrap(), "amd64")
+            .unwrap();
+    assert!(matches!(
+        resolve(
+            &universe,
+            vec![universe.require("p0").unwrap()],
+            SearchLimits::default()
+        ),
+        Err(ResolveError::LimitExceeded)
+    ));
 }
