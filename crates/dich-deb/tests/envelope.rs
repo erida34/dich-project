@@ -135,6 +135,128 @@ fn links_elf_facts_to_archive_paths_without_approving_compatibility() {
             .any(|name| name == "libc.so.6")
     );
 }
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn allowlists_only_a_self_contained_library_and_loads_it_by_explicit_path() {
+    let control = tar_with_file(
+        "control",
+        b"Package: dich-fixture\nVersion: 1\nArchitecture: amd64\n",
+    );
+    let data = tar_with_file(
+        "usr/lib/x86_64-linux-gnu/libdich-fixture.so",
+        include_bytes!("../../dich-elf/tests/fixtures/libdich-fixture.so"),
+    );
+    let bytes = deb(&[
+        ("debian-binary", b"2.0\n"),
+        ("control.tar", &control),
+        ("data.tar", &data),
+    ]);
+    let report = inspect_deb(&bytes, Limits::default()).unwrap();
+    let compatibility = dich_deb::assess_compatibility(&report);
+    assert_eq!(
+        compatibility.status,
+        dich_deb::CompatibilityStatus::Supported
+    );
+    assert_eq!(
+        compatibility.evidence[0].code,
+        "standalone_dso_allowlist_v1"
+    );
+
+    let directory = tempfile::tempdir().unwrap();
+    let library = directory.path().join("libdich-fixture.so");
+    std::fs::write(
+        &library,
+        include_bytes!("../../dich-elf/tests/fixtures/libdich-fixture.so"),
+    )
+    .unwrap();
+    let checker = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../dich-elf/tests/fixtures/dlopen-checker"
+    );
+    let result = std::process::Command::new(checker)
+        .arg(library)
+        .status()
+        .unwrap();
+    assert!(result.success());
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn additional_payload_prevents_the_standalone_library_allowlist() {
+    let control = tar_with_file("control", b"Package: dich-fixture\nVersion: 1\n");
+    let mut data = Vec::new();
+    {
+        let mut tar = tar::Builder::new(&mut data);
+        for (path, content) in [
+            (
+                "usr/lib/x86_64-linux-gnu/libdich-fixture.so",
+                include_bytes!("../../dich-elf/tests/fixtures/libdich-fixture.so").as_slice(),
+            ),
+            (
+                "usr/share/doc/dich-fixture/copyright",
+                b"license".as_slice(),
+            ),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, path, content).unwrap();
+        }
+        tar.finish().unwrap();
+    }
+    let bytes = deb(&[
+        ("debian-binary", b"2.0\n"),
+        ("control.tar", &control),
+        ("data.tar", &data),
+    ]);
+    let report = inspect_deb(&bytes, Limits::default()).unwrap();
+    assert_eq!(
+        dich_deb::assess_compatibility(&report).status,
+        dich_deb::CompatibilityStatus::ReviewRequired
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn dynamic_initializer_keeps_shared_object_in_review() {
+    let control = tar_with_file("control", b"Package: dich-fixture\nVersion: 1\n");
+    let data = tar_with_file(
+        "usr/lib/x86_64-linux-gnu/libdich-fixture.so",
+        include_bytes!("../../dich-elf/tests/fixtures/constructor-library.so"),
+    );
+    let bytes = deb(&[
+        ("debian-binary", b"2.0\n"),
+        ("control.tar", &control),
+        ("data.tar", &data),
+    ]);
+    let report = inspect_deb(&bytes, Limits::default()).unwrap();
+    assert_eq!(
+        dich_deb::assess_compatibility(&report).status,
+        dich_deb::CompatibilityStatus::ReviewRequired
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn absolute_path_literal_keeps_shared_object_in_review() {
+    let control = tar_with_file("control", b"Package: dich-fixture\nVersion: 1\n");
+    let data = tar_with_file(
+        "usr/lib/x86_64-linux-gnu/libdich-fixture.so",
+        include_bytes!("../../dich-elf/tests/fixtures/path-library.so"),
+    );
+    let bytes = deb(&[
+        ("debian-binary", b"2.0\n"),
+        ("control.tar", &control),
+        ("data.tar", &data),
+    ]);
+    let report = inspect_deb(&bytes, Limits::default()).unwrap();
+    assert_eq!(
+        dich_deb::assess_compatibility(&report).status,
+        dich_deb::CompatibilityStatus::ReviewRequired
+    );
+}
 #[test]
 fn rejects_wrong_order_duplicate_members_truncation_and_size_limits() {
     let control = tar_with_file("control", b"metadata");

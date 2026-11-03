@@ -1,0 +1,9 @@
+# ADR 0025 — Standalone shared-object allowlist v1
+
+Status: Accepted for a deliberately tiny, non-installing compatibility class.
+
+The first supported class is one unmodified, self-contained ELF shared object at `usr/lib/.../<name>.so`, on tested x86-64. It must have a matching SONAME, no interpreter, NEEDED entries, undefined dynamic imports, symbol-version requirements, RPATH/RUNPATH, initializer arrays, IFUNC, absolute path literals, executable stack, or writable-executable load segment. The data payload must contain exactly this one regular file. Packages with scripts, triggers, configuration/service/pkg-config/CMake/NSS/locale markers, or any additional payload remain `unsupported` or `review_required`.
+
+This class is loadable only when the caller is explicitly given the stored object path and uses ordinary `dlopen`; Dich does not alter ELF bytes, loader configuration, `LD_LIBRARY_PATH`, or profiles. The object is not activated or installed. `supported` describes this narrow structural/runtime fixture class only; it does not establish source authenticity, benign behavior, general ABI safety, or package installability. Signed repository authentication remains a separate gate. The executable code still runs with the caller's privileges when loaded, so the configured publisher remains trusted.
+
+The WSL fixture is built with `-shared -fPIC -nostdlib`, contains one exported pure function, and is loaded from a different directory by a test harness. Constructor-bearing, absolute-path-bearing, dependency-bearing and multi-file examples must fail to receive `supported`. Runtime coverage is x86-64 only; other machines remain `review_required` until native fixtures pass. Broader relocation and profile behavior require a later ADR.

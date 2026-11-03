@@ -6,6 +6,10 @@ mod staging;
 pub use staging::{StageError, StagedArchive, StagedFile, stage_cached};
 
 use serde::Serialize;
+
+const MAX_PACKAGE_EVIDENCE_ITEMS: usize = 4096;
+const MAX_PACKAGE_EVIDENCE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PACKAGE_ELF_OBJECTS: usize = 256;
 use std::{
     error::Error,
     fmt,
@@ -141,6 +145,17 @@ pub struct CompatibilityReport {
 /// Produce an evidence-based compatibility status. Current policy never returns `supported`;
 /// that result requires a later explicit package-class allowlist and validated fixtures.
 pub fn assess_compatibility(archive: &ArchiveReport) -> CompatibilityReport {
+    if let Some(path) = allowlisted_standalone_dso(archive) {
+        return CompatibilityReport {
+            schema_version: 1,
+            status: CompatibilityStatus::Supported,
+            evidence: vec![CompatibilityEvidence {
+                code: "standalone_dso_allowlist_v1".into(),
+                path: Some(path),
+                detail: "self-contained shared object; caller must load its explicit store path; activation is not supported".into(),
+            }],
+        };
+    }
     let mut evidence = Vec::new();
     let mut blocked = false;
     let mut add = |code: &str, path: Option<&str>, detail: String, unsupported: bool| {
@@ -281,6 +296,38 @@ pub fn assess_compatibility(archive: &ArchiveReport) -> CompatibilityReport {
                 false,
             );
         }
+        if elf.report.has_initializers {
+            add(
+                "elf_initializers",
+                Some(&elf.path),
+                "ELF contains initialization code that runs when loaded".into(),
+                false,
+            );
+        }
+        if elf.report.executable_stack_required || elf.report.writable_executable_segment {
+            add(
+                "elf_memory_permissions",
+                Some(&elf.path),
+                "ELF requests executable stack or writable executable memory".into(),
+                true,
+            );
+        }
+        if elf.report.has_ifunc_symbols {
+            add(
+                "elf_ifunc",
+                Some(&elf.path),
+                "ELF uses indirect functions resolved by executable code".into(),
+                false,
+            );
+        }
+        for path in &elf.report.absolute_path_literals {
+            add(
+                "elf_absolute_path_literal",
+                Some(&elf.path),
+                format!("ELF contains absolute path literal {path}"),
+                false,
+            );
+        }
     }
     if evidence.is_empty() {
         evidence.push(CompatibilityEvidence {
@@ -303,6 +350,58 @@ pub fn assess_compatibility(archive: &ArchiveReport) -> CompatibilityReport {
             CompatibilityStatus::ReviewRequired
         },
         evidence,
+    }
+}
+
+fn allowlisted_standalone_dso(archive: &ArchiveReport) -> Option<String> {
+    if archive.data_files != 1
+        || !archive.scripts.is_empty()
+        || archive.triggers_present
+        || archive.elf_objects.len() != 1
+        || !archive.path_indicators.configuration_files.is_empty()
+        || !archive.path_indicators.service_units.is_empty()
+        || !archive.path_indicators.pkg_config_files.is_empty()
+        || !archive.path_indicators.cmake_files.is_empty()
+        || !archive.path_indicators.nss_locale_files.is_empty()
+        || !archive.path_indicators.shebangs.is_empty()
+        || !archive.path_indicators.embedded_absolute_paths.is_empty()
+        || !archive.path_indicators.host_integration_markers.is_empty()
+    {
+        return None;
+    }
+    let elf = &archive.elf_objects[0];
+    let path = &elf.path;
+    let report = &elf.report;
+    let basename = path.rsplit('/').next()?;
+    if !path.starts_with("usr/lib/")
+        || !basename.ends_with(".so")
+        || report.object_type != 3 // ELF ET_DYN
+        || !report.is_shared_object
+        || report.machine != host_elf_machine()?
+        || report.interpreter.is_some()
+        || report.soname.as_deref() != Some(basename)
+        || !report.needed.is_empty()
+        || !report.undefined_symbols.is_empty()
+        || !report.required_symbol_versions.is_empty()
+        || !report.dynamic_loading_symbols.is_empty()
+        || !report.rpath.is_empty()
+        || !report.runpath.is_empty()
+        || report.has_initializers
+        || report.executable_stack_required
+        || report.writable_executable_segment
+        || report.has_ifunc_symbols
+        || !report.absolute_path_literals.is_empty()
+    {
+        return None;
+    }
+    Some(path.clone())
+}
+
+fn host_elf_machine() -> Option<u16> {
+    if cfg!(target_arch = "x86_64") {
+        Some(62)
+    } else {
+        None
     }
 }
 
@@ -657,11 +756,22 @@ fn inspect_tar(bytes: &[u8], limits: Limits, control: bool) -> Result<TarReport,
                 String::from_utf8(normalized.clone()).map_err(|_| DebError::Unsupported)?
             };
             scan_content_indicators(&mut path_indicators, &scan_path, &content)?;
+            ensure_indicator_limits(&path_indicators)?;
             if !control {
                 if let Some(report) =
                     dich_elf::inspect_elf(&content).map_err(|_| DebError::Unsupported)?
                 {
-                    if elf_objects.len() >= 4096 {
+                    if elf_objects.len() >= MAX_PACKAGE_ELF_OBJECTS
+                        || elf_report_bytes(&report)
+                            .checked_add(
+                                elf_objects
+                                    .iter()
+                                    .map(|item: &ElfArchiveEvidence| elf_report_bytes(&item.report))
+                                    .sum::<usize>(),
+                            )
+                            .ok_or(DebError::Limit)?
+                            > MAX_PACKAGE_EVIDENCE_BYTES
+                    {
                         return Err(DebError::Limit);
                     }
                     elf_objects.push(ElfArchiveEvidence {
@@ -820,6 +930,60 @@ fn scan_content_indicators(
         }
     }
     Ok(())
+}
+
+fn ensure_indicator_limits(indicators: &PackagePathIndicators) -> Result<(), DebError> {
+    let paths = indicators
+        .configuration_files
+        .iter()
+        .chain(&indicators.service_units)
+        .chain(&indicators.pkg_config_files)
+        .chain(&indicators.cmake_files)
+        .chain(&indicators.nss_locale_files);
+    let path_items = paths.clone().count();
+    let path_bytes = paths.map(String::len).sum::<usize>();
+    let content_items = indicators.shebangs.len()
+        + indicators.embedded_absolute_paths.len()
+        + indicators.host_integration_markers.len();
+    let content_bytes = indicators
+        .shebangs
+        .iter()
+        .map(|item| item.file.len() + item.value.len())
+        .chain(
+            indicators
+                .embedded_absolute_paths
+                .iter()
+                .map(|item| item.file.len() + item.value.len()),
+        )
+        .chain(
+            indicators
+                .host_integration_markers
+                .iter()
+                .map(|item| item.file.len() + item.marker.len()),
+        )
+        .sum::<usize>();
+    if path_items + content_items > MAX_PACKAGE_EVIDENCE_ITEMS
+        || path_bytes + content_bytes > MAX_PACKAGE_EVIDENCE_BYTES
+    {
+        return Err(DebError::Limit);
+    }
+    Ok(())
+}
+
+fn elf_report_bytes(report: &dich_elf::ElfReport) -> usize {
+    report.interpreter.as_ref().map_or(0, String::len)
+        + report.soname.as_ref().map_or(0, String::len)
+        + report
+            .needed
+            .iter()
+            .chain(&report.rpath)
+            .chain(&report.runpath)
+            .chain(&report.required_symbol_versions)
+            .chain(&report.dynamic_loading_symbols)
+            .chain(&report.undefined_symbols)
+            .chain(&report.absolute_path_literals)
+            .map(String::len)
+            .sum::<usize>()
 }
 
 fn normalize_path(path: &[u8], directory: bool) -> Result<Vec<u8>, DebError> {

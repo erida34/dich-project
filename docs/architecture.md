@@ -37,7 +37,7 @@ Control and Debian version parsers support cached package name/version queries, 
 
 `dich-elf` exposes bounded single-object ELF evidence through the pinned Goblin parser: interpreter, SONAME, NEEDED, RPATH/RUNPATH, required symbol versions and direct dynamic-loader imports (ADR 0022). The `.deb` inspector binds those reports to archive paths and records heuristic configuration/service/pkg-config/CMake/NSS/locale paths, text absolute-path tokens, shebangs, maintainer triggers and selected service/host command markers (ADR 0023). Evidence is incomplete and does not approve ABI compatibility or relocation.
 
-`dich inspect --json` maps these findings to a versioned `compatibility_report` with conservative states. `supported` is part of the schema but remains unreachable until an explicit package allowlist and runtime validation pass (ADR 0024).
+`dich inspect --json` maps these findings to a versioned `compatibility_report` with conservative states. `supported` is limited to one dependency-free shared object that passes the explicit-path fixture policy; it never means installed or activated (ADRs 0024 and 0025).
 
 ## Invariants
 - No store object is published prior to full verification.

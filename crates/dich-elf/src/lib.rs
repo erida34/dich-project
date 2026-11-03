@@ -41,6 +41,15 @@ pub struct ElfReport {
     pub required_symbol_versions: Vec<String>,
     /// Direct imports that suggest runtime loading not captured by `DT_NEEDED` alone.
     pub dynamic_loading_symbols: Vec<String>,
+    /// Undefined dynamic imports; an empty list is required by the standalone DSO subset.
+    pub undefined_symbols: Vec<String>,
+    pub is_shared_object: bool,
+    pub has_initializers: bool,
+    pub executable_stack_required: bool,
+    pub writable_executable_segment: bool,
+    pub has_ifunc_symbols: bool,
+    /// Null-terminated printable absolute path literals found in file-backed sections.
+    pub absolute_path_literals: Vec<String>,
 }
 
 /// Return `None` for non-ELF bytes. A file bearing ELF magic but malformed is an error.
@@ -70,17 +79,76 @@ pub fn inspect_elf(bytes: &[u8]) -> Result<Option<ElfReport>, ElfError> {
     let rpath = copy_list(&elf.rpaths, &mut budget)?;
     let runpath = copy_list(&elf.runpaths, &mut budget)?;
     let mut dynamic_loading_symbols = Vec::new();
+    let mut undefined_symbols = Vec::new();
+    let mut has_ifunc_symbols = false;
     for symbol in &elf.dynsyms {
+        has_ifunc_symbols |= symbol.st_type() == goblin::elf::sym::STT_GNU_IFUNC;
         if symbol.st_shndx != goblin::elf::section_header::SHN_UNDEF as usize {
             continue;
         }
         let Some(name) = elf.dynstrtab.get_at(symbol.st_name) else {
             continue;
         };
+        if !name.is_empty() {
+            push_string(&mut undefined_symbols, name, &mut budget)?;
+        }
         if matches!(name, "dlopen" | "dlmopen" | "dlsym" | "dlvsym")
             && !dynamic_loading_symbols.iter().any(|v| v == name)
         {
             push_string(&mut dynamic_loading_symbols, name, &mut budget)?;
+        }
+    }
+    let has_initializers = elf.section_headers.iter().any(|section| {
+        matches!(
+            section.sh_type,
+            goblin::elf::section_header::SHT_INIT_ARRAY
+                | goblin::elf::section_header::SHT_PREINIT_ARRAY
+        )
+    }) || elf.dynamic.as_ref().is_some_and(|dynamic| {
+        dynamic.dyns.iter().any(|entry| {
+            matches!(
+                entry.d_tag,
+                goblin::elf::dynamic::DT_INIT
+                    | goblin::elf::dynamic::DT_INIT_ARRAY
+                    | goblin::elf::dynamic::DT_PREINIT_ARRAY
+            )
+        })
+    });
+    let executable_stack_required = elf.program_headers.iter().any(|header| {
+        header.p_type == goblin::elf::program_header::PT_GNU_STACK
+            && header.p_flags & goblin::elf::program_header::PF_X != 0
+    });
+    let writable_executable_segment = elf.program_headers.iter().any(|header| {
+        header.p_type == goblin::elf::program_header::PT_LOAD
+            && header.p_flags & goblin::elf::program_header::PF_W != 0
+            && header.p_flags & goblin::elf::program_header::PF_X != 0
+    });
+    let mut absolute_path_literals = Vec::new();
+    let mut section_bytes = 0usize;
+    for section in &elf.section_headers {
+        if section.sh_type != goblin::elf::section_header::SHT_PROGBITS {
+            continue;
+        }
+        let start = usize::try_from(section.sh_offset).map_err(|_| ElfError::Malformed)?;
+        let size = usize::try_from(section.sh_size).map_err(|_| ElfError::Malformed)?;
+        section_bytes = section_bytes
+            .checked_add(size)
+            .ok_or(ElfError::MetadataLimit)?;
+        if section_bytes > MAX_ELF_BYTES {
+            return Err(ElfError::MetadataLimit);
+        }
+        let end = start.checked_add(size).ok_or(ElfError::Malformed)?;
+        let section = bytes.get(start..end).ok_or(ElfError::Malformed)?;
+        for literal in section.split(|byte| *byte == 0) {
+            if literal.first() != Some(&b'/') || literal.len() > MAX_STRING_BYTES {
+                continue;
+            }
+            let Ok(path) = std::str::from_utf8(literal) else {
+                continue;
+            };
+            if path.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+                push_string(&mut absolute_path_literals, path, &mut budget)?;
+            }
         }
     }
     let mut required_symbol_versions = Vec::new();
@@ -107,6 +175,13 @@ pub fn inspect_elf(bytes: &[u8]) -> Result<Option<ElfReport>, ElfError> {
         runpath,
         required_symbol_versions,
         dynamic_loading_symbols,
+        undefined_symbols,
+        is_shared_object: elf.is_lib,
+        has_initializers,
+        executable_stack_required,
+        writable_executable_segment,
+        has_ifunc_symbols,
+        absolute_path_literals,
     }))
 }
 
@@ -193,5 +268,35 @@ mod tests {
         let report = inspect_elf(bytes).unwrap().unwrap();
         assert_eq!(report.dynamic_loading_symbols, ["dlopen"]);
         assert!(report.needed.iter().any(|name| name == "libc.so.6"));
+    }
+
+    #[test]
+    fn recognizes_only_dependency_free_shared_object_evidence() {
+        let bytes = include_bytes!("../tests/fixtures/libdich-fixture.so");
+        let report = inspect_elf(bytes).unwrap().unwrap();
+        assert!(report.is_shared_object);
+        assert_eq!(report.soname.as_deref(), Some("libdich-fixture.so"));
+        assert!(report.needed.is_empty());
+        assert!(report.undefined_symbols.is_empty());
+        assert!(report.required_symbol_versions.is_empty());
+    }
+
+    #[test]
+    fn detects_dynamic_initializers() {
+        let bytes = include_bytes!("../tests/fixtures/constructor-library.so");
+        let report = inspect_elf(bytes).unwrap().unwrap();
+        assert!(report.has_initializers);
+    }
+
+    #[test]
+    fn detects_absolute_path_literals_in_elf_sections() {
+        let bytes = include_bytes!("../tests/fixtures/path-library.so");
+        let report = inspect_elf(bytes).unwrap().unwrap();
+        assert!(
+            report
+                .absolute_path_literals
+                .iter()
+                .any(|path| path == "/etc/dich-fixture.conf")
+        );
     }
 }

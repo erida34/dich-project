@@ -60,6 +60,37 @@ fn reports_untrusted_archive_without_running_content() {
     assert_eq!(body["compatibility_report"]["status"], "review_required");
     assert!(body["compatibility_report"]["evidence"].is_array());
 }
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn supported_compatibility_does_not_claim_authenticity_or_installability() {
+    let dir = tempfile::tempdir().unwrap();
+    let control = tar_file("control", b"Package: dich-fixture\nVersion: 1\n");
+    let data = tar_file(
+        "usr/lib/x86_64-linux-gnu/libdich-fixture.so",
+        include_bytes!("../../dich-elf/tests/fixtures/libdich-fixture.so"),
+    );
+    let mut archive = Vec::new();
+    {
+        let mut builder = ar::Builder::new(&mut archive);
+        for (name, body) in [
+            ("debian-binary", b"2.0\n".as_slice()),
+            ("control.tar", control.as_slice()),
+            ("data.tar", data.as_slice()),
+        ] {
+            let header = ar::Header::new(name.as_bytes().to_vec(), body.len() as u64);
+            builder.append(&header, body).unwrap();
+        }
+    }
+    let path = dir.path().join("pure-library.deb");
+    fs::write(&path, archive).unwrap();
+    let out = run(&path);
+    assert!(out.status.success());
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["trust"], "unverified");
+    assert_eq!(body["installable"], false);
+    assert_eq!(body["compatibility_report"]["status"], "supported");
+}
 #[test]
 fn refuses_symlinks_fifos_oversized_and_malformed_files() {
     let dir = tempfile::tempdir().unwrap();
