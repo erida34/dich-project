@@ -73,3 +73,5 @@ The experimental `store ls` output is metadata only. `store verify` checks one o
 `dich inspect FILE` treats the file as unauthenticated input, reads a bounded regular file without following symlinks, does not extract or execute package scripts, and does not claim installability. It rejects FIFO/device inputs and unsupported archive forms.
 
 Experimental `fetch` requires an exact version, component, one configured source and explicit freshness policy. It reauthenticates cached signed Release/index metadata and checks the size and SHA256 of reused or downloaded bytes; a corrupt cached blob is an error rather than a silent network fallback. Successful live CLI download remains unverified in the current environment; downloaded does not mean installable.
+
+The optional `fetch --publish-tree` revalidates authorization, stages only the supported archive subset and publishes a private tree. It does not run maintainer scripts, analyze compatibility or activate the package. Failure may leave a verified cache entry or recoverable store remnants.

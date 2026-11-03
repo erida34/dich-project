@@ -1,4 +1,4 @@
-# ADR 0020 — Store CLI read boundary
+# ADR 0020 â€” Store CLI read boundary
 
 Status: Accepted for the experimental Linux store-read subset.
 
@@ -7,3 +7,5 @@ Status: Accepted for the experimental Linux store-read subset.
 Acceptance requires fixture-first end-to-end CLI tests for missing/uninitialized stores, metadata-only listing, invalid identity, corrupted files, JSON errors, and concurrent locking. No command may initialize state or silently upgrade the database as a side effect of inspection. Local `.deb` inspection and authenticated exact-version fetch will be specified separately before implementation.
 
 `inspect FILE` is a bounded read-only examination of a local untrusted archive, not source authentication. Open only a regular file with no symlink traversal and nonblocking flags; cap input before buffering, do not extract, and clearly label output unverified and not installable. Reject FIFOs, devices, symlinks, oversized files, malformed archives and unsupported formats without executing any scripts.
+
+An explicit `fetch --publish-tree` can stage a freshly reauthenticated cached artifact and publish its conservative data tree into an operator-provided protected store. It never activates the package or executes maintainer scripts. Output distinguishes cache state, tree publication and compatibility: an extracted tree is neither analyzed nor installable. A failure may leave a verified cache entry or recoverable store remnants and returns an error. Store initialization requires an existing protected directory and explicit opt-in.

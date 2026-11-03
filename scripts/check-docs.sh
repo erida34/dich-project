@@ -22,6 +22,7 @@ grep -Fq 'KIND' "$out/man/dich-store-verify.1"
 for completion in dich.bash _dich dich.fish; do
     grep -Fq 'verify' "$out/completions/$completion"
     grep -Fq 'exact-version' "$out/completions/$completion"
+    grep -Fq 'publish-tree' "$out/completions/$completion"
 done
 if command -v bash >/dev/null 2>&1; then
     bash -n "$out/completions/dich.bash"

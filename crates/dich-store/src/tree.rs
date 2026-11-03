@@ -39,6 +39,25 @@ impl TreeInput for StagedArchive {
     }
 }
 impl MetadataDb {
+    /// Stage a cached artifact and publish its private tree; never analyze or activate it.
+    pub fn stage_and_publish_cached_tree(
+        &mut self,
+        journal: &SnapshotJournal,
+        authorized: &AuthorizedArtifact,
+    ) -> Result<(StoreIdentity, TreeOutcome), PublicationError> {
+        let stage = dich_deb::stage_cached(journal, authorized, dich_deb::Limits::default())
+            .map_err(|error| match error {
+                dich_deb::StageError::Authentication => PublicationError::Authentication,
+                dich_deb::StageError::Filesystem => PublicationError::Io,
+                dich_deb::StageError::Archive(dich_deb::DebError::Limit) => PublicationError::Limit,
+                dich_deb::StageError::Archive(
+                    dich_deb::DebError::Unsupported | dich_deb::DebError::HelperUnavailable,
+                ) => PublicationError::Unsupported,
+                dich_deb::StageError::Archive(_) => PublicationError::Integrity,
+            })?;
+        self.publish_cached_tree(journal, authorized, &stage)
+    }
+
     /// Publish a bound, verified staged tree. This never activates or executes package content.
     pub fn publish_cached_tree(
         &mut self,

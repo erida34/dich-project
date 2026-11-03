@@ -2,8 +2,8 @@
 use crate::cache::{CacheError, FailurePoint};
 use crate::transport::{HttpsTransport, Transport};
 use crate::{
-    FreshnessPolicy, IndexLimits, IndexedArtifact, SnapshotJournal, Source, authorize_artifact,
-    choose_index_format, select_indexed_artifact,
+    AuthorizedArtifact, FreshnessPolicy, IndexLimits, IndexedArtifact, SnapshotJournal, Source,
+    authorize_artifact, choose_index_format, select_indexed_artifact,
 };
 use std::{error::Error, fmt, time::SystemTime};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,8 +32,18 @@ pub enum FetchState {
 }
 #[derive(Debug)]
 pub struct FetchResult {
-    pub artifact: IndexedArtifact,
+    authorization: AuthorizedArtifact,
     pub state: FetchState,
+}
+impl FetchResult {
+    pub fn artifact(&self) -> &IndexedArtifact {
+        self.authorization.artifact()
+    }
+
+    /// Authorization must still be revalidated by each subsequent operation.
+    pub fn authorization(&self) -> &AuthorizedArtifact {
+        &self.authorization
+    }
 }
 /// Reuse a revalidated cached artifact or download it into the protected verified cache.
 pub fn fetch_exact(
@@ -87,7 +97,7 @@ pub(crate) fn fetch_exact_with_transport(
     match journal.load_artifact_with_clock(&authorized, clock) {
         Ok(_) => {
             return Ok(FetchResult {
-                artifact,
+                authorization: authorized,
                 state: FetchState::Cached,
             });
         }
@@ -104,7 +114,7 @@ pub(crate) fn fetch_exact_with_transport(
         .load_artifact_with_clock(&authorized, clock)
         .map_err(|_| FetchExactError::Cache)?;
     Ok(FetchResult {
-        artifact,
+        authorization: authorized,
         state: FetchState::Downloaded,
     })
 }

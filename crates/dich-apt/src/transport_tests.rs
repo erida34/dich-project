@@ -797,8 +797,8 @@ fn exact_fetch_requires_signed_cached_index_and_verified_artifact() {
         || now,
     )
     .unwrap();
-    assert_eq!(result.artifact.name(), "fixture");
-    assert_eq!(result.artifact.version(), "1.0-1");
+    assert_eq!(result.artifact().name(), "fixture");
+    assert_eq!(result.artifact().version(), "1.0-1");
     assert_eq!(result.state, crate::FetchState::Downloaded);
     assert_eq!(fetch.calls.len(), 1);
     let mut cached = Fake {
@@ -822,7 +822,7 @@ fn exact_fetch_requires_signed_cached_index_and_verified_artifact() {
     assert_eq!(reused.state, crate::FetchState::Cached);
     assert!(cached.calls.is_empty());
     let hash = result
-        .artifact
+        .artifact()
         .sha256()
         .iter()
         .map(|b| format!("{b:02x}"))

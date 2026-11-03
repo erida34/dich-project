@@ -27,6 +27,7 @@ pub enum PublicationError {
     Integrity,
     Collision,
     Limit,
+    Unsupported,
     Io,
     Database,
     Injected,

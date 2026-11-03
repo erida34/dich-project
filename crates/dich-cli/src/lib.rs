@@ -64,6 +64,9 @@ pub enum Commands {
         /// Maximum downloaded bytes (at most 256 MiB)
         #[arg(long, default_value_t = 64 * 1024 * 1024)]
         max_bytes: u64,
+        /// Publish a conservative extracted tree into the existing store directory; never activate it
+        #[arg(long)]
+        publish_tree: bool,
     },
     /// Examine an unauthenticated local Debian archive without extracting it
     Inspect { file: String },
@@ -458,6 +461,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
             exact_version,
             component,
             max_bytes,
+            publish_tree,
         } => {
             #[cfg(target_os = "linux")]
             {
@@ -506,7 +510,31 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     dich_apt::FetchState::Downloaded => "downloaded",
                     dich_apt::FetchState::Cached => "cached",
                 };
-                let artifact = artifact.artifact;
+                let tree = if publish_tree {
+                    let mut store = dich_store::MetadataDb::open(&cli.store_dir).map_err(|_| CliError {
+                        code: "store_open_failed",
+                        message: "could not open existing protected store directory; the artifact may remain cached",
+                        trace: Vec::new(),
+                    })?;
+                    let (identity, outcome) = store.stage_and_publish_cached_tree(&journal, artifact.authorization()).map_err(|error| {
+                        let unsupported = matches!(error, dich_store::PublicationError::Unsupported);
+                        CliError {
+                            code: if unsupported { "unsupported" } else { "store_publish_failed" },
+                            message: "could not safely publish an extracted tree; the artifact may remain cached",
+                            trace: Vec::new(),
+                        }
+                    })?;
+                    Some((
+                        identity.hex(),
+                        match outcome {
+                            dich_store::TreeOutcome::Published => "published",
+                            dich_store::TreeOutcome::Reused => "reused",
+                        },
+                    ))
+                } else {
+                    None
+                };
+                let artifact = artifact.artifact();
                 let artifact_hash = artifact
                     .sha256()
                     .iter()
@@ -520,7 +548,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 if cli.json {
                     println!(
                         "{}",
-                        serde_json::json!({"schema_version":1,"status":"completed","state":state,"installable":false,"name":artifact.name(),"version":artifact.version(),"architecture":artifact.architecture(),"size":artifact.size(),"artifact_sha256":artifact_hash,"release_sha256":release_hash,"component":component})
+                        serde_json::json!({"schema_version":1,"status":"completed","state":state,"installable":false,"name":artifact.name(),"version":artifact.version(),"architecture":artifact.architecture(),"size":artifact.size(),"artifact_sha256":artifact_hash,"release_sha256":release_hash,"component":component,"tree":tree.as_ref().map(|(id, publication)| serde_json::json!({"id":id,"publication":publication,"lifecycle":"extracted","compatibility":"not_analyzed"}))})
                     );
                 } else {
                     println!(
@@ -533,12 +561,17 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     println!(
                         "artifact sha256: {artifact_hash}; signed Release sha256: {release_hash}"
                     );
+                    if let Some((id, publication)) = tree {
+                        println!(
+                            "{publication}: extracted tree {id}; compatibility not analyzed, not activated"
+                        );
+                    }
                 }
                 Ok(())
             }
             #[cfg(not(target_os = "linux"))]
             {
-                let _ = (package, exact_version, component, max_bytes);
+                let _ = (package, exact_version, component, max_bytes, publish_tree);
                 Err(CliError {
                     code: "unsupported_platform",
                     message: "authenticated fetch requires Linux",
