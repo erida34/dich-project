@@ -165,6 +165,8 @@
 
 - 2026-11-03: Independent WSL audit completed local format/check/test/clippy/doc, `cargo audit`, `cargo deny`, docs checks and CLI help; workspace tests passed (21 environment-specific tests ignored). Rebuilt `target/debian/dich_0.1.0-1_amd64.deb`, extracted it without installation, ran the packaged CLI and checked man/completion/license assets; generated an SPDX 2.3 SBOM with 117 dependency components. This exposed a release blocker: building on the current Ubuntu 24.04 environment yields `Depends: libc6 (>= 2.39)`, incompatible with declared Ubuntu 22.04 (glibc 2.35) and Debian Bookworm. CI and release package builds now target Ubuntu 22.04, but the new runner baseline and package dependency are not verified because Docker is unavailable in this WSL distro and no GitHub remote/hosted run exists. No public release or production-ready claim. Next: run the updated GitHub CI/deb smoke matrix and verify its package installs on all declared images.
 
+- 2026-11-03: Release smoke coverage was aligned with the support matrix: the tag workflow now references the amd64 OCI manifest digests for Debian Bookworm/Trixie and Ubuntu Jammy/Noble, and checks installation, CLI execution, man/completions/license files, reinstall and removal in each. Docker Hub registry headers were queried from WSL to pin the manifests. YAML, embedded shell syntax and docs asset generation pass locally; no Docker daemon is available here, so image pull/install results remain unverified. Next: run the hosted CI and tag workflow after publishing the branch to GitHub.
+
 
 
 

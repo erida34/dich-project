@@ -39,7 +39,7 @@ jobs:
           mkdir -p dist
           cargo install cargo-sbom --version 0.10.0 --locked
           python3 scripts/generate-release-sbom.py dist/dich.spdx.json
-          python3 -c 'import json; d=json.load(open("dist/dich.spdx.json")); ids={p["SPDXID"] for p in d["packages"]}; assert d["spdxVersion"] == "SPDX-2.3"; assert any(p["name"] == "dich-engine" for p in d["packages"]); assert len(d["packages"]) > 50; assert any(r["relationshipType"] == "DESCRIBES" and r["relatedSpdxElement"] in ids for r in d["relationships"])'
+          python3 -c 'import json; d=json.load(open("dist/dich.spdx.json")); ids={p["SPDXID"] for p in d["packages"]}; allowed=ids|{d["SPDXID"]}; assert d["spdxVersion"] == "SPDX-2.3"; assert any(p["name"] == "dich-engine" for p in d["packages"]); assert len(d["packages"]) > 50; assert any(r["relationshipType"] == "DESCRIBES" and r["relatedSpdxElement"] in ids for r in d["relationships"]); assert all(r["spdxElementId"] in allowed and r["relatedSpdxElement"] in allowed for r in d["relationships"])'
       - name: Inspect and smoke test .deb
         run: |
           set -eu
@@ -51,9 +51,28 @@ jobs:
           dpkg-deb --contents "$deb" | grep -F '/usr/share/zsh/vendor-completions/_dich'
           dpkg-deb --contents "$deb" | grep -F '/usr/share/fish/vendor_completions.d/dich.fish'
           dpkg-deb --contents "$deb" | grep -F '/usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt'
-          # Pin the tested amd64 manifests; slim images exclude manpages by default.
-          for image in debian@sha256:1e1a22175fbf1b32157ddaf0219e1db4e5401fab2b94ed285add64d18587cd2d ubuntu@sha256:78d4744ead1f5b19b04d0df558ab182a5300903900755e515b2ca4d10eb2044d; do
-            docker run --rm -v "$PWD:/work:ro" "$image" sh -c 'set -eu; printf "path-include /usr/share/man/man1/dich*.1.gz\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke; apt-get update -qq; apt-get install -y -qq /work/'"$deb"'; dich --help; test -f /usr/share/man/man1/dich.1.gz; test -f /usr/share/bash-completion/completions/dich; test -f /usr/share/zsh/vendor-completions/_dich; test -f /usr/share/fish/vendor_completions.d/dich.fish; apt-get remove -y -qq dich'
+          # Pin every declared amd64 distro manifest; slim images exclude manpages by default.
+          for image in \
+            debian@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 \
+            debian@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 \
+            ubuntu@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11 \
+            ubuntu@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852; do
+            docker run --rm --platform linux/amd64 -v "$PWD:/work:ro" -e DICH_DEB="/work/${deb#./}" "$image" sh -c '
+              set -eu
+              printf "path-include /usr/share/man/man1/dich*.1.gz\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
+              apt-get update -qq
+              apt-get install -y -qq "$DICH_DEB"
+              dich --help
+              test -f /usr/share/man/man1/dich.1.gz
+              test -f /usr/share/bash-completion/completions/dich
+              test -f /usr/share/zsh/vendor-completions/_dich
+              test -f /usr/share/fish/vendor_completions.d/dich.fish
+              test -f /usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt
+              apt-get install --reinstall -y -qq "$DICH_DEB"
+              dich --version
+              apt-get remove -y -qq dich
+              test ! -e /usr/bin/dich
+            '
           done
       - name: Prepare artifacts
         run: |
@@ -61,6 +80,7 @@ jobs:
           cp target/debian/*.deb dist/
           cd dist
           sha256sum *.deb *.spdx.json > SHA256SUMS
+          sha256sum -c SHA256SUMS
       - uses: actions/attest-build-provenance@c074443f1b5fb2a2817da07137f750b441f89f9d # v2.2.3
         with:
           subject-path: 'dist/*.deb'
