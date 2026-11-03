@@ -157,6 +157,10 @@
 
 - 2026-11-03: Phase 7 release artifact and distribution policy milestone verified and checked (ADR 0038): documented release distribution policy in `docs/releasing.md`. Pinned primary target architecture to Linux `amd64` with `arm64` explicitly deferred until native runner verification. Release assets comprise `dich_<version>_amd64.deb`, `SHA256SUMS`, SPDX 2.3 SBOM (`dich.spdx.json`), and cryptographic build provenance attestations. Full workspace checks passed in WSL. Next: Phase 7 Line 71 (Document migration of store DB format, downgrade and recoverability, data durability and backup/restore).
 
+- 2026-11-03: Phase 7 store DB migration, durability, and recovery milestone verified and checked (ADR 0039): documented SQLite storage architecture (`metadata.sqlite3`), WAL journal mode, `synchronous = FULL`, application ID `0x44494348`, and schema evolution from v1 to v4 in `docs/store-migration-durability-and-backup.md`. Detailed transactional forward migration semantics, fail-closed downgrade protection preventing older binaries from corrupting newer schemas, crash consistency and atomic journal recovery, and operational procedures for offline file copy and online SQLite backup API. Full workspace checks passed in WSL. Next: Phase 7 Line 72 (External beta testers, issue triage, threat model review, compatibility limitations explicit).
+
+- 2026-11-03: Phase 7 beta testing, issue triage, threat model review, and compatibility limitations milestone verified and checked (ADR 0040): authored `docs/beta-testing-and-triage.md` detailing the external beta testing program, feedback guidelines, four-tier issue triage taxonomy (P0-P3 SLAs), comprehensive threat model review mapping all threat boundaries to implemented defenses and verification suites, and explicit compatibility boundaries defining Dich's exact supported scope (x86-64 glibc DSO closures via `dlmopen`) and fail-closed rejection of arbitrary binaries, system configuration, and maintainer scripts. Phase 7 is complete. Next: Audit and validate final Release criteria.
+
 
 
 

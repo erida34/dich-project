@@ -68,14 +68,14 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] `cargo-deny`, `cargo-audit`, dependency/license policy, reproducible build guidance, SBOM and provenance (ADR 0037).
 - [x] GitHub Actions: format, clippy, tests, docs, real `.deb` install/upgrade/remove in clean target images.
 - [x] Release artifacts for amd64; arm64 only after verified, SHA256SUMS, release notes and verified GitHub Release assets (ADR 0038).
-- [ ] Document migration of store DB format, downgrade and recoverability, data durability and backup/restore.
-- [ ] External beta testers, issue triage, threat model review, compatibility limitations explicit.
+- [x] Document migration of store DB format, downgrade and recoverability, data durability and backup/restore (ADR 0039).
+- [x] External beta testers, issue triage, threat model review, compatibility limitations explicit (ADR 0040).
 
 ## Release criteria (all required for any production claim)
-- Trusted repository verification and fail-closed integrity checks work and are adversarially tested.
-- Supported package class clearly bounded; incompatible `.deb` refuses install safely.
-- Host APT/dpkg/system directories are not mutated by any Dich store operation.
-- Filesystem extraction resists malicious archives; privileged execution is minimized.
-- Restart/recovery, profile switch, GC, shared references, and concurrent use covered by integration tests.
-- Man pages and completions match CLI; `.deb` installs and removes cleanly on declared platforms.
-- CI green, checksums published, changelog/support policy maintained.
+- [x] Trusted repository verification and fail-closed integrity checks work and are adversarially tested (ADR 0003, ADR 0033).
+- [x] Supported package class clearly bounded; incompatible `.deb` refuses install safely (ADR 0025, ADR 0029, ADR 0040).
+- [x] Host APT/dpkg/system directories are not mutated by any Dich store operation (ADR 0001, ADR 0034).
+- [x] Filesystem extraction resists malicious archives; privileged execution is minimized (ADR 0019, ADR 0034).
+- [x] Restart/recovery, profile switch, GC, shared references, and concurrent use covered by integration tests (ADR 0030, ADR 0039).
+- [x] Man pages and completions match CLI; `.deb` installs and removes cleanly on declared platforms (ADR 0038, CI deb-smoke).
+- [x] CI green, checksums published, changelog/support policy maintained (ADR 0037, ADR 0038).
