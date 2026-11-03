@@ -3,6 +3,7 @@
 use std::{error::Error, fmt};
 
 pub mod admission;
+pub mod reference_graph;
 pub mod resolver;
 
 /// The distribution must be selected explicitly by the operator.
