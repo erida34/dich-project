@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+dich-core = { path = "../dich-core" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tempfile = "3"

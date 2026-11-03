@@ -39,3 +39,5 @@ Phase 1 regression coverage maps threats to executable tests:
 - Malicious artifact paths and redirects: `artifact::tests::rejects_url_escape_and_ambiguous_artifact_paths` and `transport_tests::redirect_policy_rejects_origin_escape_and_encoded_paths`.
 
 These tests are scoped to the metadata and download pipeline, not extraction, installation, full system compromise or a substitute for independent security review.
+
+The initial resolver policy (ADR 0009) compares exact distribution, suite and native architecture and rejects known moving aliases. It is not yet used by a resolver, and an operator must select a genuinely immutable suite label; matching labels do not establish ABI compatibility. Freshness must be rechecked separately at use time.

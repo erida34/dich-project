@@ -95,3 +95,35 @@ fn permits_missing_valid_until_only_with_explicit_max_age() {
     );
     assert!(FreshnessPolicy::new(Duration::ZERO, Duration::ZERO, false).is_err());
 }
+
+#[test]
+fn authenticated_release_obeys_explicit_resolver_policy() {
+    let (_dir, source) = source();
+    let verified = verify_configured_inrelease(
+        &source,
+        include_bytes!("fixtures/freshness/valid.InRelease"),
+    )
+    .unwrap();
+    let freshness = FreshnessPolicy::new(
+        Duration::from_secs(2 * 86400),
+        Duration::from_secs(300),
+        true,
+    )
+    .unwrap();
+    let release =
+        validate_release(&verified, UNIX_EPOCH + Duration::from_secs(NOW), freshness).unwrap();
+    let policy =
+        dich_core::ArchitecturePolicy::new(dich_core::Distribution::Debian, "bookworm", "amd64")
+            .unwrap();
+    assert!(dich_apt::check_release_policy(&policy, &release).is_ok());
+    for policy in [
+        dich_core::ArchitecturePolicy::new(dich_core::Distribution::Ubuntu, "bookworm", "amd64")
+            .unwrap(),
+        dich_core::ArchitecturePolicy::new(dich_core::Distribution::Debian, "trixie", "amd64")
+            .unwrap(),
+        dich_core::ArchitecturePolicy::new(dich_core::Distribution::Debian, "bookworm", "arm64")
+            .unwrap(),
+    ] {
+        assert!(dich_apt::check_release_policy(&policy, &release).is_err());
+    }
+}

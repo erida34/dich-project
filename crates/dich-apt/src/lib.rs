@@ -27,7 +27,9 @@ pub use index::{
 mod signatures;
 pub use keyring::read_configured_keyring;
 mod freshness;
+mod resolver_policy;
 mod sources;
+pub use resolver_policy::check_release_policy;
 mod transport;
 pub use transport::{FetchError, FetchedIndex, fetch_packages_index, fetch_signed_release};
 #[cfg(target_os = "linux")]

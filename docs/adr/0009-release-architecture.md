@@ -1,0 +1,7 @@
+# ADR 0009 — Resolver release and architecture boundary
+
+Status: Accepted for the initial policy model; resolver integration remains pending.
+
+A future resolver must receive an explicit Debian or Ubuntu distribution, one literal release suite and one native architecture, and reject every candidate whose authenticated source has a different distribution, suite or native architecture. Package architecture may match the native architecture or be `all`; `all` does not imply ABI independence or installability. Known moving aliases such as stable/testing/unstable and wildcard architectures are rejected. This is not a complete registry of aliases: operators must select an immutable release label, and signatures do not prevent a trusted repository from reassigning it. Suite aliases including security/updates are not inferred to be equivalent: distinct literal suites cannot be mixed until a verified immutable release identity and update policy have their own decision and tests. Operator-supplied labels and signed metadata cannot prove binary ABI compatibility; later compatibility gates still must fail closed. The current model is not a resolver, does not authenticate source inputs, and does not authorize installation.
+
+The `dich-apt` bridge checks an already authenticated, time-validated Release against the policy; it checks identity only and does not refresh the expiry check. The future resolver must revalidate freshness and enforce this check on every candidate. No present CLI command resolves or installs packages.
