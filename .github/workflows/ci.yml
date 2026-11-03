@@ -29,7 +29,9 @@ jobs:
       - run: cargo run --locked -p dich-cli -- --help
 
   deb-package-smoke:
-    runs-on: ubuntu-24.04
+    # Build against the oldest declared glibc baseline (Ubuntu 22.04 / 2.35).
+    # Building on newer runners can raise cargo-deb's inferred libc6 minimum.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable action commit
@@ -50,6 +52,7 @@ jobs:
           dpkg-deb --contents "$deb" | grep -F '/usr/share/bash-completion/completions/dich'
           dpkg-deb --contents "$deb" | grep -F '/usr/share/zsh/vendor-completions/_dich'
           dpkg-deb --contents "$deb" | grep -F '/usr/share/fish/vendor_completions.d/dich.fish'
+          dpkg-deb --contents "$deb" | grep -F '/usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt'
 
           # Smoke test install, upgrade, and removal across target distributions
           for image in debian:bookworm-slim debian:trixie-slim ubuntu:22.04 ubuntu:24.04; do
@@ -64,6 +67,7 @@ jobs:
               test -f /usr/share/bash-completion/completions/dich
               test -f /usr/share/zsh/vendor-completions/_dich
               test -f /usr/share/fish/vendor_completions.d/dich.fish
+              test -f /usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt
               # Upgrade/reinstall test
               apt-get install --reinstall -y -qq /work/'"$deb"'
               /usr/bin/dich --version

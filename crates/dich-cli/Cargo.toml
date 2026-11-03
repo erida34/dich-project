@@ -2,6 +2,7 @@
 name = "dich-cli"
 default-run = "dich"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -64,4 +65,5 @@ assets = [
   ["../../README.md", "usr/share/doc/dich/README.md", "644"],
   ["../../LICENSE-MIT", "usr/share/doc/dich/LICENSE-MIT", "644"],
   ["../../LICENSE-APACHE", "usr/share/doc/dich/LICENSE-APACHE", "644"],
+  ["../../packaging/licenses/CDLA-Permissive-2.0.txt", "usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt", "644"],
 ]

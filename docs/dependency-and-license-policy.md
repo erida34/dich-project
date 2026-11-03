@@ -14,12 +14,13 @@ Dich is dual-licensed under the **MIT License** and the **Apache License, Versio
 - All dependencies linked into Dich binaries or libraries must use permissive OSI-approved licenses:
   - `MIT`
   - `Apache-2.0` (and `Apache-2.0 WITH LLVM-exception`)
-  - `BSD-2-Clause` / `BSD-3-Clause`
+  - `BSD-3-Clause`
   - `ISC`
-  - `Unicode-3.0` / `Unicode-DFS-2016`
+  - `Unicode-3.0`
   - `Zlib`
+- Mozilla root-certificate data bundled by `webpki-roots` is a scoped `CDLA-Permissive-2.0` exception limited to the exact locked crate versions in `deny.toml`. The license text ships in `/usr/share/doc/dich/licenses/` in the `.deb`.
 - **Prohibited**: Copyleft licenses (GPL, LGPL, AGPL, SSPL) and non-commercial/restrictive licenses are strictly denied by `deny.toml`.
-- Continuous compliance is enforced by `cargo-deny check licenses`.
+- Continuous compliance is enforced by `cargo-deny check licenses`; the certificate-data license exception does not broaden the global code-license allowlist.
 
 ## 3. Reproducible Build Guidance
 
@@ -50,9 +51,9 @@ To ensure independent verification of Dich binary releases:
 
 ## 4. Software Bill of Materials (SBOM)
 
-Release builds generate a machine-readable Software Bill of Materials in SPDX (2.3) and CycloneDX (1.5) JSON formats:
-- Details all direct and transitive Rust dependencies, exact versions, and package hashes from `Cargo.lock`.
-- Produced during the release workflow and published alongside release `.deb` packages and checksum files (`SHA256SUMS`).
+Release builds generate an SPDX 2.3 Software Bill of Materials from the `dich-cli` Cargo dependency graph using `cargo-sbom` 0.10.0:
+- It records the binary crate and resolved Rust dependency components, versions, declared licenses, and dependency relationships from the locked Cargo graph.
+- The release workflow publishes it with the `.deb`; `SHA256SUMS` covers both files. GitHub build provenance attests the `.deb` subject. These GitHub outputs remain unverified until the hosted tag workflow runs.
 
 ## 5. Build Provenance and Attestations
 

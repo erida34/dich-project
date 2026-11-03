@@ -8,20 +8,38 @@ permissions:
   attestations: write
 jobs:
   build-deb:
-    runs-on: ubuntu-24.04
+    # Keep the executable compatible with the declared Ubuntu 22.04 baseline.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable action commit
         with:
           toolchain: stable
           components: rustfmt, clippy
+      - name: Verify tag matches package version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dich-cli"))')"
+          test "$tag_version" = "$package_version"
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace --all-targets
+      - uses: EmbarkStudios/cargo-deny-action@8371184b9282b7df336cc688f9181df27330c8e9 # v2.0.11
+        with:
+          command: check
+      - uses: rustsec/audit-check@2569c7636e090a9cf1ee9ad663e6fa6e77a2dd44 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
       - run: cargo build --locked --release -p dich-cli --bin dich
       - run: cargo run --locked --release -p dich-cli --bin dich-gen-docs -- packaging/generated
       - run: cargo install cargo-deb --version 3.8.0 --locked
       - run: cargo deb -p dich-cli --no-build
+      - name: Generate dependency SBOM
+        run: |
+          mkdir -p dist
+          cargo install cargo-sbom --version 0.10.0 --locked
+          python3 scripts/generate-release-sbom.py dist/dich.spdx.json
+          python3 -c 'import json; d=json.load(open("dist/dich.spdx.json")); ids={p["SPDXID"] for p in d["packages"]}; assert d["spdxVersion"] == "SPDX-2.3"; assert any(p["name"] == "dich-engine" for p in d["packages"]); assert len(d["packages"]) > 50; assert any(r["relationshipType"] == "DESCRIBES" and r["relatedSpdxElement"] in ids for r in d["relationships"])'
       - name: Inspect and smoke test .deb
         run: |
           set -eu
@@ -32,6 +50,7 @@ jobs:
           dpkg-deb --contents "$deb" | grep -F '/usr/share/bash-completion/completions/dich'
           dpkg-deb --contents "$deb" | grep -F '/usr/share/zsh/vendor-completions/_dich'
           dpkg-deb --contents "$deb" | grep -F '/usr/share/fish/vendor_completions.d/dich.fish'
+          dpkg-deb --contents "$deb" | grep -F '/usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt'
           # Pin the tested amd64 manifests; slim images exclude manpages by default.
           for image in debian@sha256:1e1a22175fbf1b32157ddaf0219e1db4e5401fab2b94ed285add64d18587cd2d ubuntu@sha256:78d4744ead1f5b19b04d0df558ab182a5300903900755e515b2ca4d10eb2044d; do
             docker run --rm -v "$PWD:/work:ro" "$image" sh -c 'set -eu; printf "path-include /usr/share/man/man1/dich*.1.gz\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke; apt-get update -qq; apt-get install -y -qq /work/'"$deb"'; dich --help; test -f /usr/share/man/man1/dich.1.gz; test -f /usr/share/bash-completion/completions/dich; test -f /usr/share/zsh/vendor-completions/_dich; test -f /usr/share/fish/vendor_completions.d/dich.fish; apt-get remove -y -qq dich'
@@ -41,11 +60,7 @@ jobs:
           mkdir -p dist
           cp target/debian/*.deb dist/
           cd dist
-          sha256sum *.deb > SHA256SUMS
-      - name: Generate SPDX SBOM
-        run: |
-          mkdir -p dist
-          echo '{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"dich","documentNamespace":"https://github.com/dich-project/dich/releases","creationInfo":{"creators":["Tool: dich-release-pipeline"],"created":"2026-11-03T00:00:00Z"},"packages":[{"name":"dich","SPDXID":"SPDXRef-Package-dich","versionInfo":"0.1.0","downloadLocation":"NONE","licenseConcluded":"MIT OR Apache-2.0"}]}' > dist/dich.spdx.json
+          sha256sum *.deb *.spdx.json > SHA256SUMS
       - uses: actions/attest-build-provenance@c074443f1b5fb2a2817da07137f750b441f89f9d # v2.2.3
         with:
           subject-path: 'dist/*.deb'

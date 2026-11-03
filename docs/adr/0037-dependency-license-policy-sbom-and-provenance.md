@@ -19,9 +19,10 @@ The project roadmap requires:
 - Introduce `deny.toml` configured to deny known vulnerabilities, unmaintained/unsound crates, non-permissive licenses, wildcard dependencies, and unapproved registries.
 - Introduce `audit.toml` configured for `cargo-audit` vulnerability scanning against the RustSec Advisory Database.
 - Add `cargo-deny` and `cargo-audit` checks to `.github/workflows/ci.yml`.
+- Generate SPDX 2.3 from the locked `dich-cli` dependency graph with pinned `cargo-sbom`; package facts must not be hardcoded to a sample version.
 
 ### 2. Permissive License Standard
-- All runtime dependencies must adhere to permissive OSI licenses (`MIT`, `Apache-2.0`, `BSD-2/3-Clause`, `ISC`, `Unicode-3.0`, `Zlib`).
+- All runtime dependencies must adhere to permissive OSI licenses (`MIT`, `Apache-2.0`, `BSD-3-Clause`, `ISC`, `Unicode-3.0`, `Zlib`), except Mozilla root-certificate data in the exact locked `webpki-roots` versions. That data uses `CDLA-Permissive-2.0`; its license text ships in the Dich `.deb`, and no other crate is granted this exception.
 - Copyleft licenses (GPL, LGPL, AGPL) are strictly forbidden in Dich binaries and libraries.
 
 ### 3. Reproducible Build Standard
@@ -35,6 +36,7 @@ The project roadmap requires:
   - `SHA256SUMS` manifest of all release artifacts.
   - Software Bill of Materials (SBOM) in SPDX JSON format.
   - Signed build provenance attestations using `actions/attest-build-provenance` conforming to SLSA standards.
+- The SPDX SBOM is generated from the Cargo graph and is checksummed with the `.deb`; the hosted release output remains unverified until the tag workflow runs.
 
 ## Consequences
 

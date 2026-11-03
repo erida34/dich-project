@@ -11,7 +11,7 @@ Use semver tags `vX.Y.Z`, update changelog, validate the exact release commit, b
 5. Test installation of Dich itself (not package manager semantics) inside throwaway Debian/Ubuntu containers and verify `man dich`, shell completion file locations and uninstallation.
 
 ## GitHub Actions
-`ci.yml` runs Rust checks and docs; `release.yml` builds amd64 `.deb` on a Linux runner, smoke-tests in Debian trixie and Ubuntu 24.04 containers, publishes artifact + SHA256SUMS. Actions and test-image manifests are pinned to immutable SHA256/commit identifiers, and `cargo-deb` is pinned to version 3.8.0. The workflow explicitly includes Dich man pages because slim images exclude them by default. The actual hosted workflow and release assets remain unverified until run; ensure repository permissions and release protection rules are configured. Publishing artifacts is deliberately limited to `v*` tags. No GPG signing/attestation is asserted by the scaffold.
+`ci.yml` runs Rust checks, dependency/license audits and a four-distribution `.deb` smoke matrix. Package builds run on Ubuntu 22.04 to keep the executable's glibc requirement at or below the declared 2.35 baseline; a package built on Ubuntu 24.04 was observed to require libc6 2.39 and would not install on Ubuntu 22.04 or Debian Bookworm. `release.yml` rejects a tag whose SemVer does not match the package version, repeats the locked code/audit gates, builds amd64 `.deb`, and smoke-tests pinned Debian trixie and Ubuntu 24.04 images. It generates SPDX 2.3 dependency data with pinned `cargo-sbom` 0.10.0, includes the scoped webpki root-data license, and hashes the `.deb` plus SBOM in `SHA256SUMS`. Actions and release-image manifests are pinned to immutable commits/digests; `cargo-deb` is pinned to 3.8.0. The hosted Jammy build, minimum libc dependency, hosted workflows and GitHub release assets remain unverified until CI runs in GitHub and a repository remote is available. Docker is unavailable in the current WSL distro. GitHub build provenance is configured; GPG artifact signing is not claimed.
 
 ## Release Artifacts and Architecture Policy
 
@@ -20,9 +20,9 @@ Use semver tags `vX.Y.Z`, update changelog, validate the exact release commit, b
    - `arm64` is deferred until native runner verification and container smoke testing are integrated; no unverified cross-compiled binaries are published (ADR 0038).
 
 2. **Published Assets on GitHub Releases**:
-   - `dich_<version>_amd64.deb`: Debian package.
+   - `dich_<upstream-version>-<debian-revision>_amd64.deb`: Debian package (for example, `dich_0.1.0-1_amd64.deb`).
    - `SHA256SUMS`: SHA-256 digests of all released files.
-   - `dich.spdx.json`: Machine-readable SPDX 2.3 Software Bill of Materials.
+- `dich.spdx.json`: Machine-readable SPDX 2.3 SBOM generated from the locked `dich-cli` dependency graph.
    - Cryptographic build provenance attestations generated via `actions/attest-build-provenance`.
 
 3. **Release Gate Verification**:

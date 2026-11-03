@@ -5,6 +5,10 @@ All notable changes to Dich will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+- Fixed the locked `url` dependency after `cargo audit` identified vulnerable `idna 0.5.0`; corrected `cargo-deny` configuration and scoped the webpki certificate-data license exception with its text included in the `.deb`.
+- Replaced the hand-authored release SBOM with SPDX 2.3 generated from the locked Cargo dependency graph; release checksums now cover the `.deb` and SBOM, and tags must match the package version.
+
 ## [0.7.0] - 2026-11-03
 
 ### Added
