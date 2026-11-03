@@ -59,7 +59,7 @@ impl DebianUniverse {
             let supported = (arch == architecture || arch == "all")
                 && relations.pre_depends().is_empty()
                 && relations.system_boundary() == SystemBoundary::Ordinary
-                && relations.multi_arch() == MultiArch::No
+                && !(arch == "all" && relations.multi_arch() == MultiArch::Same)
                 && simple(relations.depends())
                 && simple(relations.conflicts())
                 && simple(relations.breaks())

@@ -44,7 +44,6 @@ fn unsupported_semantics_and_system_packages_are_never_silently_selected() {
         "Depends: lib [amd64]",
         "Essential: yes",
         "Priority: required",
-        "Multi-Arch: same",
     ] {
         let input = format!("Package: root\nVersion: 1\nArchitecture: amd64\n{field}\n");
         let universe = DebianUniverse::from_stanzas(
@@ -118,4 +117,40 @@ fn unsupported_candidate_is_not_reported_as_proven_unsatisfiable() {
 fn duplicate_package_identity_is_not_picked_by_fixture_order() {
     let stanzas = parse_control_stanzas(b"Package: duplicate\nVersion: 1\nArchitecture: amd64\n\nPackage: duplicate\nVersion: 1\nArchitecture: amd64\nDepends: other\n").unwrap();
     assert!(DebianUniverse::from_stanzas(&stanzas, "amd64").is_err());
+}
+
+#[test]
+fn unqualified_dependencies_allow_native_packages_with_multiarch_flags() {
+    for flag in ["same", "foreign", "allowed"] {
+        let fixture = format!(
+            "Package: root\nVersion: 1\nArchitecture: amd64\nDepends: library\n\nPackage: library\nVersion: 1\nArchitecture: amd64\nMulti-Arch: {flag}\n"
+        );
+        let universe = DebianUniverse::from_stanzas(
+            &parse_control_stanzas(fixture.as_bytes()).unwrap(),
+            "amd64",
+        )
+        .unwrap();
+        let plan = resolve(
+            &universe,
+            vec![universe.require("root").unwrap()],
+            SearchLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(plan.selected.len(), 2);
+    }
+}
+
+#[test]
+fn architecture_all_with_multiarch_same_is_conservatively_unsupported() {
+    let fixture = b"Package: root\nVersion: 1\nArchitecture: all\nMulti-Arch: same\n";
+    let universe =
+        DebianUniverse::from_stanzas(&parse_control_stanzas(fixture).unwrap(), "amd64").unwrap();
+    assert!(matches!(
+        resolve(
+            &universe,
+            vec![universe.require("root").unwrap()],
+            SearchLimits::default()
+        ),
+        Err(dich_core::resolver::ResolveError::Unsupported { .. })
+    ));
 }
