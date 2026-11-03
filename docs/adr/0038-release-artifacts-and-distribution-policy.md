@@ -42,3 +42,4 @@ Before release publication, `.github/workflows/release.yml` executes containeriz
 
 - Dich releases remain predictable, secure, and verifiable.
 - Avoids releasing untested cross-compiled architectures.
+- GitHub repository ruleset `Protect version tags` (ID 26488874) restricts creation, update and deletion of `v*` tags to the repository owner; the owner is configured as a bypass actor. The `v0.7.0` experimental prerelease tag is annotated but not GPG-signed. The current workflow does not verify tag signatures and the default branch has no protection rule. A production release requires a maintainer signing key, automated signer verification, protected release branch and reviewer-gated publication. GitHub build provenance is not a GPG signature of package contents.
