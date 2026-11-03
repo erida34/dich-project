@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 dich-apt = { path = "../dich-apt" }
 sha2 = "0.10"
+getrandom = "0.4"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

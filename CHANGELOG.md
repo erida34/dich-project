@@ -12,4 +12,5 @@
 - Record known maintainer script hashes and trigger-file presence without executing scripts.
 - Added source-bound canonical store identity derivation; persistence and deduplication are not implemented.
 - Added an experimental protected SQLite WAL metadata foundation; object publication and recovery are not implemented.
+- Prototype durable publication of verified raw archives; extracted store trees and automatic recovery remain unimplemented.
 - Project definition, developer guide, Rust workspace stub, documentation and release-pipeline scaffold.

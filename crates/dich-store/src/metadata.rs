@@ -31,9 +31,9 @@ impl Error for MetadataError {}
 /// Protected SQLite connection; it does not yet publish or reference objects.
 pub struct MetadataDb {
     // Fields drop in declaration order: SQLite must close before the advisory lock is released.
-    connection: Connection,
+    pub(crate) connection: Connection,
     _file: OwnedFd,
-    _root: OwnedFd,
+    pub(crate) root: OwnedFd,
     _lock: OwnedFd,
 }
 impl MetadataDb {
@@ -99,15 +99,23 @@ impl MetadataDb {
             )
             .map_err(|_| MetadataError::Sqlite)?;
         if !((created && app == 0 && version == 0 && empty == 0)
-            || (app == APPLICATION_ID && version == 1))
+            || (app == APPLICATION_ID && matches!(version, 1 | 2)))
         {
             return Err(MetadataError::UnknownSchema);
         }
         if app == APPLICATION_ID {
             let sql: String = connection.query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'publication_intents'", [], |row| row.get(0)).map_err(|_| MetadataError::UnknownSchema)?;
-            if empty != 1
+            if empty != version
                 || sql
                     != "CREATE TABLE publication_intents (object_id TEXT PRIMARY KEY NOT NULL, stage_name TEXT NOT NULL, created_at INTEGER NOT NULL)"
+            {
+                return Err(MetadataError::UnknownSchema);
+            }
+        }
+        if app == APPLICATION_ID && version == 2 {
+            let sql: String = connection.query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'verified_archives'", [], |row| row.get(0)).map_err(|_| MetadataError::UnknownSchema)?;
+            if sql
+                != "CREATE TABLE verified_archives (object_id TEXT PRIMARY KEY NOT NULL, manifest BLOB NOT NULL, artifact_size INTEGER NOT NULL, artifact_sha256 BLOB NOT NULL)"
             {
                 return Err(MetadataError::UnknownSchema);
             }
@@ -139,6 +147,9 @@ impl MetadataDb {
             transaction.execute_batch("CREATE TABLE publication_intents (object_id TEXT PRIMARY KEY NOT NULL, stage_name TEXT NOT NULL, created_at INTEGER NOT NULL); PRAGMA application_id = 1145652040; PRAGMA user_version = 1;").map_err(|_| MetadataError::Sqlite)?;
             transaction.commit().map_err(|_| MetadataError::Sqlite)?;
         }
+        if version < 2 {
+            migrate_to_v2(&mut connection, false)?;
+        }
         for name in [
             "metadata.sqlite3-wal",
             "metadata.sqlite3-shm",
@@ -148,11 +159,19 @@ impl MetadataDb {
         }
         fs::fsync(&root).map_err(|_| MetadataError::Io)?;
         Ok(Self {
-            _root: root,
+            root,
             _file: file,
             _lock: lock,
             connection,
         })
+    }
+    #[cfg(test)]
+    pub(crate) fn test_object_count(&self) -> i64 {
+        self.connection
+            .query_row("SELECT count(*) FROM verified_archives", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
     }
     pub fn journal_mode(&self) -> Result<String, MetadataError> {
         self.connection
@@ -170,6 +189,17 @@ impl MetadataDb {
             .map_err(|_| MetadataError::Sqlite)
     }
 }
+fn migrate_to_v2(connection: &mut Connection, inject_failure: bool) -> Result<(), MetadataError> {
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| MetadataError::Sqlite)?;
+    tx.execute_batch("CREATE TABLE verified_archives (object_id TEXT PRIMARY KEY NOT NULL, manifest BLOB NOT NULL, artifact_size INTEGER NOT NULL, artifact_sha256 BLOB NOT NULL); PRAGMA user_version = 2;").map_err(|_| MetadataError::Sqlite)?;
+    if inject_failure {
+        return Err(MetadataError::Io);
+    }
+    tx.commit().map_err(|_| MetadataError::Sqlite)
+}
+
 fn acquire_lock(root: &OwnedFd) -> Result<OwnedFd, MetadataError> {
     let lock = fs::openat(
         root,
@@ -305,5 +335,28 @@ mod tests {
             )
             .unwrap();
         assert_eq!(name, "stage-two");
+    }
+    #[test]
+    fn failed_migration_rolls_back_schema_and_version() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE publication_intents (object_id TEXT PRIMARY KEY NOT NULL, stage_name TEXT NOT NULL, created_at INTEGER NOT NULL); PRAGMA user_version = 1;").unwrap();
+        assert!(migrate_to_v2(&mut db, true).is_err());
+        let version: i64 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        let count: i64 = db
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'verified_archives'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 1);
+        assert_eq!(count, 0);
+        migrate_to_v2(&mut db, false).unwrap();
+        let version: i64 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
     }
 }

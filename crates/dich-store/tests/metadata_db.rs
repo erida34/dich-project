@@ -13,14 +13,14 @@ fn metadata_uses_wal_full_durability_and_reopens() {
     let db = MetadataDb::open(root.path()).unwrap();
     assert_eq!(db.journal_mode().unwrap(), "wal");
     assert_eq!(db.synchronous().unwrap(), 2);
-    assert_eq!(db.schema_version().unwrap(), 1);
+    assert_eq!(db.schema_version().unwrap(), 2);
     drop(db);
     assert_eq!(
         MetadataDb::open(root.path())
             .unwrap()
             .schema_version()
             .unwrap(),
-        1
+        2
     );
 }
 #[test]
@@ -146,4 +146,17 @@ fn lock_symlink_or_hardlink_cannot_redirect_store_operations() {
     std::fs::hard_link(&target, &lock).unwrap();
     assert!(MetadataDb::open(root.path()).is_err());
     assert_eq!(std::fs::read(target).unwrap(), b"sentinel");
+}
+
+#[test]
+fn upgrades_known_v1_metadata_schema_transactionally() {
+    let root = private_dir();
+    let path = root.path().join("metadata.sqlite3");
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE publication_intents (object_id TEXT PRIMARY KEY NOT NULL, stage_name TEXT NOT NULL, created_at INTEGER NOT NULL); PRAGMA application_id = 1145652040; PRAGMA user_version = 1;").unwrap();
+    }
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let db = MetadataDb::open(root.path()).unwrap();
+    assert_eq!(db.schema_version().unwrap(), 2);
 }

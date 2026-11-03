@@ -3,7 +3,9 @@ use dich_apt::{
     FreshnessPolicy, IndexLimits, SnapshotJournal, authorize_artifact, choose_index_format,
     load_configured_sources, select_indexed_artifact,
 };
-use dich_store::{IdentityComparison, StoreIdentity, TransformPolicy};
+use dich_store::{
+    IdentityComparison, MetadataDb, PublicationOutcome, StoreIdentity, TransformPolicy,
+};
 use std::{
     path::Path,
     time::{Duration, SystemTime},
@@ -45,4 +47,17 @@ fn identity_is_derived_from_reverified_cached_artifact() {
     .unwrap();
     assert_eq!(first.hex().len(), 64);
     assert_eq!(first.compare(&second), IdentityComparison::SameIdentity);
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = MetadataDb::open(root.path()).unwrap();
+    let (archive_identity, outcome) = store.publish_cached_archive(&journal, &authorized).unwrap();
+    assert_eq!(outcome, PublicationOutcome::Published);
+    let (again, outcome) = store.publish_cached_archive(&journal, &authorized).unwrap();
+    assert_eq!(outcome, PublicationOutcome::Reused);
+    assert_eq!(
+        archive_identity.compare(&again),
+        IdentityComparison::SameIdentity
+    );
+    assert_ne!(archive_identity.digest(), first.digest());
 }

@@ -4,7 +4,11 @@
 #[cfg(target_os = "linux")]
 mod metadata;
 #[cfg(target_os = "linux")]
+mod publication;
+#[cfg(target_os = "linux")]
 pub use metadata::{MetadataDb, MetadataError};
+#[cfg(target_os = "linux")]
+pub use publication::{PublicationError, PublicationOutcome};
 
 use sha2::{Digest, Sha256};
 use std::{error::Error, fmt};
@@ -40,6 +44,7 @@ pub enum IdentityComparison {
 #[derive(Debug, Clone, Copy)]
 pub enum TransformPolicy {
     PrivateRegularFilesV1,
+    VerifiedArchiveV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityError {
@@ -106,6 +111,7 @@ impl StoreIdentity {
             release_sha256: *artifact.release_sha256(),
             policy: match policy {
                 TransformPolicy::PrivateRegularFilesV1 => 1,
+                TransformPolicy::VerifiedArchiveV1 => 2,
             },
         };
         let identity = identity_from_material(material)?;
@@ -255,5 +261,457 @@ mod tests {
         let mut bad = material();
         bad.uri = "x".repeat(4097);
         assert!(identity_from_material(bad).is_err());
+    }
+}
+#[cfg(all(test, target_os = "linux"))]
+mod publication_tests {
+    use super::*;
+    use crate::metadata::MetadataDb;
+    use crate::publication::{FailurePoint, PublicationOutcome, publish_for_test};
+    use sha2::{Digest, Sha256};
+    use std::{io::Cursor, os::unix::fs::PermissionsExt};
+    fn setup() -> (tempfile::TempDir, MetadataDb, StoreIdentity) {
+        let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let db = MetadataDb::open(dir.path()).unwrap();
+        let bytes = b"verified fixture";
+        let material = IdentityMaterial {
+            name: "sample".into(),
+            version: "1".into(),
+            architecture: "amd64".into(),
+            distribution: "debian".into(),
+            suite: "bookworm".into(),
+            uri: "https://example.org/debian".into(),
+            source_architecture: "amd64".into(),
+            components: vec!["main".into()],
+            fingerprints: vec!["012345".into()],
+            artifact_path: "pool/main/s/sample.deb".into(),
+            artifact_size: bytes.len() as u64,
+            artifact_sha256: Sha256::digest(bytes).into(),
+            release_sha256: [2; 32],
+            policy: 2,
+        };
+        (dir, db, identity_from_material(material).unwrap())
+    }
+    #[test]
+    fn publish_is_atomic_and_exact_reuse_checks_existing_bytes() {
+        let (dir, mut db, identity) = setup();
+        let bytes = b"verified fixture";
+        assert_eq!(
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                Sha256::digest(bytes).into(),
+                FailurePoint::None
+            )
+            .unwrap(),
+            PublicationOutcome::Published
+        );
+        assert_eq!(
+            std::fs::read(
+                dir.path()
+                    .join("objects")
+                    .join(format!("{}.deb", identity.hex()))
+            )
+            .unwrap(),
+            bytes
+        );
+        assert_eq!(
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                Sha256::digest(bytes).into(),
+                FailurePoint::None
+            )
+            .unwrap(),
+            PublicationOutcome::Reused
+        );
+    }
+    #[test]
+    fn failed_publication_never_commits_missing_object() {
+        for point in [
+            FailurePoint::BeforeFileSync,
+            FailurePoint::AfterFileSync,
+            FailurePoint::AfterRename,
+            FailurePoint::AfterDirectorySync,
+            FailurePoint::BeforeCommit,
+        ] {
+            let (_dir, mut db, identity) = setup();
+            let bytes = b"verified fixture";
+            assert!(
+                publish_for_test(
+                    &mut db,
+                    &identity,
+                    Cursor::new(bytes),
+                    bytes.len() as u64,
+                    Sha256::digest(bytes).into(),
+                    point
+                )
+                .is_err()
+            );
+            assert_eq!(db.test_object_count(), 0);
+            assert!(
+                publish_for_test(
+                    &mut db,
+                    &identity,
+                    Cursor::new(bytes),
+                    bytes.len() as u64,
+                    Sha256::digest(bytes).into(),
+                    FailurePoint::None
+                )
+                .is_ok()
+            );
+            assert_eq!(db.test_object_count(), 1);
+        }
+    }
+    #[test]
+    fn adopting_orphan_requires_directory_sync_before_commit() {
+        let (_dir, mut db, identity) = setup();
+        let bytes = b"verified fixture";
+        let hash = Sha256::digest(bytes).into();
+        assert!(
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                hash,
+                FailurePoint::AfterRename
+            )
+            .is_err()
+        );
+        assert!(
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                hash,
+                FailurePoint::AfterDirectorySync
+            )
+            .is_err()
+        );
+        assert_eq!(db.test_object_count(), 0);
+        assert!(
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                hash,
+                FailurePoint::None
+            )
+            .is_ok()
+        );
+    }
+    #[test]
+    fn failure_after_commit_is_recoverable_by_exact_retry() {
+        let (dir, mut db, identity) = setup();
+        let bytes = b"verified fixture";
+        let hash = Sha256::digest(bytes).into();
+        assert!(
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                hash,
+                FailurePoint::AfterCommit
+            )
+            .is_err()
+        );
+        assert_eq!(db.test_object_count(), 1);
+        drop(db);
+        let mut db = MetadataDb::open(dir.path()).unwrap();
+        assert_eq!(
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                hash,
+                FailurePoint::None
+            )
+            .unwrap(),
+            PublicationOutcome::Reused
+        );
+    }
+    #[test]
+    fn altered_or_missing_published_content_is_never_silently_reused() {
+        for remove in [false, true] {
+            let (dir, mut db, identity) = setup();
+            let bytes = b"verified fixture";
+            let hash = Sha256::digest(bytes).into();
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                hash,
+                FailurePoint::None,
+            )
+            .unwrap();
+            let path = dir
+                .path()
+                .join("objects")
+                .join(format!("{}.deb", identity.hex()));
+            if remove {
+                std::fs::remove_file(&path).unwrap();
+            } else {
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+                std::fs::write(&path, b"tampered fixture").unwrap();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+            }
+            assert!(
+                publish_for_test(
+                    &mut db,
+                    &identity,
+                    Cursor::new(bytes),
+                    bytes.len() as u64,
+                    hash,
+                    FailurePoint::None
+                )
+                .is_err()
+            );
+            assert_eq!(db.test_object_count(), 1);
+        }
+    }
+    #[test]
+    fn existing_symlink_and_digest_collision_fail_closed() {
+        use std::os::unix::fs::symlink;
+        let (dir, mut db, identity) = setup();
+        let bytes = b"verified fixture";
+        let hash = Sha256::digest(bytes).into();
+        let target = dir.path().join("sentinel");
+        std::fs::write(&target, b"do not change").unwrap();
+        let objects = dir.path().join("objects");
+        std::fs::create_dir(&objects).unwrap();
+        std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = objects.join(format!("{}.deb", identity.hex()));
+        symlink(&target, &path).unwrap();
+        assert!(
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                hash,
+                FailurePoint::None
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"do not change");
+        std::fs::remove_file(&path).unwrap();
+        publish_for_test(
+            &mut db,
+            &identity,
+            Cursor::new(bytes),
+            bytes.len() as u64,
+            hash,
+            FailurePoint::None,
+        )
+        .unwrap();
+        let mut different = StoreIdentity {
+            digest: identity.digest,
+            canonical: identity.canonical.clone(),
+        };
+        different.canonical.push(0);
+        assert!(matches!(
+            publish_for_test(
+                &mut db,
+                &different,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                hash,
+                FailurePoint::None
+            ),
+            Err(crate::publication::PublicationError::Collision)
+        ));
+    }
+    #[test]
+    #[ignore = "subprocess crash helper"]
+    fn child_exits_at_publication_boundary() {
+        let root = std::env::var_os("DICH_PUBLICATION_TEST_DIR").unwrap();
+        let point = match std::env::var("DICH_PUBLICATION_FAILPOINT")
+            .unwrap()
+            .as_str()
+        {
+            "before_file_sync" => FailurePoint::BeforeFileSync,
+            "after_file_sync" => FailurePoint::AfterFileSync,
+            "after_rename" => FailurePoint::AfterRename,
+            "after_directory_sync" => FailurePoint::AfterDirectorySync,
+            "before_commit" => FailurePoint::BeforeCommit,
+            "after_commit" => FailurePoint::AfterCommit,
+            _ => panic!("unknown test failpoint"),
+        };
+        let mut db = MetadataDb::open(std::path::Path::new(&root)).unwrap();
+        let bytes = b"verified fixture";
+        let material = IdentityMaterial {
+            name: "sample".into(),
+            version: "1".into(),
+            architecture: "amd64".into(),
+            distribution: "debian".into(),
+            suite: "bookworm".into(),
+            uri: "https://example.org/debian".into(),
+            source_architecture: "amd64".into(),
+            components: vec!["main".into()],
+            fingerprints: vec!["012345".into()],
+            artifact_path: "pool/main/s/sample.deb".into(),
+            artifact_size: bytes.len() as u64,
+            artifact_sha256: Sha256::digest(bytes).into(),
+            release_sha256: [2; 32],
+            policy: 2,
+        };
+        let identity = identity_from_material(material).unwrap();
+        let _ = publish_for_test(
+            &mut db,
+            &identity,
+            Cursor::new(bytes),
+            bytes.len() as u64,
+            Sha256::digest(bytes).into(),
+            point,
+        );
+        panic!("test failpoint did not terminate process");
+    }
+    #[test]
+    fn abrupt_process_exit_at_each_publication_boundary_is_retriable() {
+        for point in [
+            "before_file_sync",
+            "after_file_sync",
+            "after_rename",
+            "after_directory_sync",
+            "before_commit",
+            "after_commit",
+        ] {
+            let (dir, db, identity) = setup();
+            drop(db);
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "publication_tests::child_exits_at_publication_boundary",
+                ])
+                .env("DICH_PUBLICATION_TEST_DIR", dir.path())
+                .env("DICH_PUBLICATION_FAILPOINT", point)
+                .env("DICH_INJECT_PROCESS_EXIT", "1")
+                .output()
+                .unwrap();
+            assert_eq!(
+                child.status.code(),
+                Some(86),
+                "{point}: {}",
+                String::from_utf8_lossy(&child.stderr)
+            );
+            let mut reopened = MetadataDb::open(dir.path()).unwrap();
+            assert_eq!(
+                reopened.test_object_count(),
+                if point == "after_commit" { 1 } else { 0 }
+            );
+            let bytes = b"verified fixture";
+            assert!(
+                publish_for_test(
+                    &mut reopened,
+                    &identity,
+                    Cursor::new(bytes),
+                    bytes.len() as u64,
+                    Sha256::digest(bytes).into(),
+                    FailurePoint::None
+                )
+                .is_ok()
+            );
+            assert_eq!(reopened.test_object_count(), 1);
+        }
+    }
+    #[test]
+    fn reuse_rejects_dangerous_mode_bits_on_existing_object() {
+        let (dir, mut db, identity) = setup();
+        let bytes = b"verified fixture";
+        let hash = Sha256::digest(bytes).into();
+        publish_for_test(
+            &mut db,
+            &identity,
+            Cursor::new(bytes),
+            bytes.len() as u64,
+            hash,
+            FailurePoint::None,
+        )
+        .unwrap();
+        let path = dir
+            .path()
+            .join("objects")
+            .join(format!("{}.deb", identity.hex()));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o4400)).unwrap();
+        assert!(
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                hash,
+                FailurePoint::None
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn existing_hardlink_is_never_adopted() {
+        let (dir, mut db, identity) = setup();
+        let bytes = b"verified fixture";
+        let hash = Sha256::digest(bytes).into();
+        let target = dir.path().join("protected");
+        std::fs::write(&target, bytes).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o400)).unwrap();
+        let objects = dir.path().join("objects");
+        std::fs::create_dir(&objects).unwrap();
+        std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::hard_link(&target, objects.join(format!("{}.deb", identity.hex()))).unwrap();
+        assert!(
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                hash,
+                FailurePoint::None
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read(target).unwrap(), bytes);
+        assert_eq!(db.test_object_count(), 0);
+    }
+    #[test]
+    fn failed_source_revalidation_never_commits_publication() {
+        let (_dir, mut db, identity) = setup();
+        let bytes = b"verified fixture";
+        let hash = Sha256::digest(bytes).into();
+        let result = crate::publication::publish_reader(
+            &mut db,
+            &identity,
+            Cursor::new(bytes),
+            bytes.len() as u64,
+            hash,
+            FailurePoint::None,
+            || Err(crate::publication::PublicationError::Authentication),
+        );
+        assert!(matches!(
+            result,
+            Err(crate::publication::PublicationError::Authentication)
+        ));
+        assert_eq!(db.test_object_count(), 0);
+        assert!(
+            publish_for_test(
+                &mut db,
+                &identity,
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                hash,
+                FailurePoint::None
+            )
+            .is_ok()
+        );
     }
 }
