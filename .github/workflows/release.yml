@@ -59,15 +59,18 @@ jobs:
             ubuntu@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852; do
             docker run --rm --platform linux/amd64 -v "$PWD:/work:ro" -e DICH_DEB="/work/${deb#./}" "$image" sh -c '
               set -eu
-              printf "path-include /usr/share/man/man1/dich*.1.gz\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
+              printf "path-include /usr/share/man/man1/dich*.1.gz\npath-include /usr/share/doc/dich/licenses/*\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
               apt-get update -qq
               apt-get install -y -qq "$DICH_DEB"
               dich --help
-              test -f /usr/share/man/man1/dich.1.gz
-              test -f /usr/share/bash-completion/completions/dich
-              test -f /usr/share/zsh/vendor-completions/_dich
-              test -f /usr/share/fish/vendor_completions.d/dich.fish
-              test -f /usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt
+              for asset in \
+                /usr/share/man/man1/dich.1.gz \
+                /usr/share/bash-completion/completions/dich \
+                /usr/share/zsh/vendor-completions/_dich \
+                /usr/share/fish/vendor_completions.d/dich.fish \
+                /usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt; do
+                test -f "$asset" || { echo "Missing installed package asset: $asset"; dpkg-query -L dich; exit 1; }
+              done
               apt-get install --reinstall -y -qq "$DICH_DEB"
               dich --version
               apt-get remove -y -qq dich

@@ -59,15 +59,18 @@ jobs:
             echo "=== Smoke testing in $image ==="
             docker run --rm -v "$PWD:/work:ro" "$image" sh -c '
               set -eu
-              printf "path-include /usr/share/man/man1/dich*.1.gz\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
+              printf "path-include /usr/share/man/man1/dich*.1.gz\npath-include /usr/share/doc/dich/licenses/*\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
               apt-get update -qq
               apt-get install -y -qq /work/'"$deb"'
               /usr/bin/dich --help
-              test -f /usr/share/man/man1/dich.1.gz
-              test -f /usr/share/bash-completion/completions/dich
-              test -f /usr/share/zsh/vendor-completions/_dich
-              test -f /usr/share/fish/vendor_completions.d/dich.fish
-              test -f /usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt
+              for asset in \
+                /usr/share/man/man1/dich.1.gz \
+                /usr/share/bash-completion/completions/dich \
+                /usr/share/zsh/vendor-completions/_dich \
+                /usr/share/fish/vendor_completions.d/dich.fish \
+                /usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt; do
+                test -f "$asset" || { echo "Missing installed package asset: $asset"; dpkg-query -L dich; exit 1; }
+              done
               # Upgrade/reinstall test
               apt-get install --reinstall -y -qq /work/'"$deb"'
               /usr/bin/dich --version

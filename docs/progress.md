@@ -171,6 +171,8 @@
 
 - 2026-11-03: Hosted CI started after the `master` trigger fix but immediately rejected two invalid action commit refs for `cargo-deny-action` and `audit-check`. Resolved both tags to their actual immutable upstream commits and verified each commit contains an `action.yml`; corrected refs in CI and release workflows. The package smoke job from the first run was still progressing. Next: push valid action pins and inspect the rerun.
 
+- 2026-11-03: First hosted package job confirmed the Ubuntu 22.04 build produces `libc6 (>= 2.34)` and installed/launched Dich in Debian Bookworm. It then failed because the slim image's dpkg policy excludes `/usr/share/doc`, so the required third-party license file was absent. Updated both smoke workflows to opt that license path back in and to list missing installed assets in failures. This is a packaging-test correction; the four-distro matrix has not passed yet.
+
 
 
 
