@@ -9,6 +9,7 @@ use dich_core::{ArchitecturePolicy, Distribution, reference_graph::ReferenceGrap
 use dich_deb::{ArchiveReport, CompatibilityReport, CompatibilityStatus, Limits, inspect_deb};
 use dich_store::{MetadataDb, ProfileGeneration, PublicationError, TreeOutcome};
 use std::{
+    collections::BTreeMap,
     error::Error,
     fmt,
     io::Read,
@@ -162,14 +163,14 @@ pub fn install_dso_profile(
     }
     let mut ids = Vec::with_capacity(fetched.len());
     let mut objects = Vec::with_capacity(fetched.len());
-    for (pin, artifact) in plan.pins.iter().zip(&fetched) {
+    for ((pin, artifact), report) in plan.pins.iter().zip(&fetched).zip(&reports) {
         let (identity, outcome) = store
             .stage_and_publish_cached_tree(journal, artifact.authorization())
             .map_err(EngineError::Store)?;
         let id = identity.hex();
-        let elf_path = reports
-            .get(ids.len())
-            .and_then(|report| report.elf_objects.first())
+        let elf_path = report
+            .elf_objects
+            .first()
             .ok_or(EngineError::Inspection)?
             .path
             .clone();
@@ -186,8 +187,34 @@ pub fn install_dso_profile(
             tree_outcome: outcome,
         });
     }
-    let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
-    let graph = ReferenceGraph::new(&id_refs, &[]).map_err(|_| EngineError::Inspection)?;
+    let ids_by_label: BTreeMap<_, _> = plan
+        .packages
+        .iter()
+        .cloned()
+        .zip(ids.iter().cloned())
+        .collect();
+    let root = ids_by_label
+        .get(&plan.root)
+        .ok_or(EngineError::Inspection)?;
+    let dependency_edges: Vec<_> = plan
+        .dependency_edges
+        .iter()
+        .map(|(from, to)| {
+            Ok((
+                ids_by_label
+                    .get(from)
+                    .ok_or(EngineError::Inspection)?
+                    .clone(),
+                ids_by_label.get(to).ok_or(EngineError::Inspection)?.clone(),
+            ))
+        })
+        .collect::<Result<_, EngineError>>()?;
+    let root_refs = [root.as_str()];
+    let edge_refs: Vec<_> = dependency_edges
+        .iter()
+        .map(|(from, to)| (from.as_str(), to.as_str()))
+        .collect();
+    let graph = ReferenceGraph::new(&root_refs, &edge_refs).map_err(|_| EngineError::Inspection)?;
     let (graph_id, _) = store
         .put_reference_graph(&graph)
         .map_err(EngineError::Store)?;

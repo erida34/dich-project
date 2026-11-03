@@ -155,6 +155,30 @@ fn signed_cached_archive_can_publish_a_tree_without_running_scripts() {
     )]);
     let library_v2_data = make_tar(&[("usr/lib/x86_64-linux-gnu/libfixture.so", &library_v2)]);
     let library_v2_archive = make_deb(library_v2_control, library_v2_data);
+
+    let common_so = include_bytes!("../../dich-elf/tests/fixtures/shared-libcommon.so");
+    let plugin_v1_so = include_bytes!("../../dich-elf/tests/fixtures/shared-libplugin-v1.so");
+    let plugin_v2_so = include_bytes!("../../dich-elf/tests/fixtures/shared-libplugin-v2.so");
+    let common_control = make_tar(&[(
+        "control",
+        b"Package: libdich-common\nVersion: 1.0-1\nArchitecture: amd64\n",
+    )]);
+    let common_data = make_tar(&[("usr/lib/x86_64-linux-gnu/libcommon.so", common_so)]);
+    let common_archive = make_deb(common_control, common_data);
+
+    let plugin_v1_control = make_tar(&[(
+        "control",
+        b"Package: dich-plugin\nVersion: 1.0-1\nArchitecture: amd64\nDepends: libdich-common (= 1.0-1)\n",
+    )]);
+    let plugin_v1_data = make_tar(&[("usr/lib/x86_64-linux-gnu/libplugin.so", plugin_v1_so)]);
+    let plugin_v1_archive = make_deb(plugin_v1_control, plugin_v1_data);
+
+    let plugin_v2_control = make_tar(&[(
+        "control",
+        b"Package: dich-plugin\nVersion: 2.0-1\nArchitecture: amd64\nDepends: libdich-common (= 1.0-1)\n",
+    )]);
+    let plugin_v2_data = make_tar(&[("usr/lib/x86_64-linux-gnu/libplugin.so", plugin_v2_so)]);
+    let plugin_v2_archive = make_deb(plugin_v2_control, plugin_v2_data);
     let hex = |bytes: &[u8]| {
         Sha256::digest(bytes)
             .iter()
@@ -174,6 +198,18 @@ fn signed_cached_archive_can_publish_a_tree_without_running_scripts() {
         "Package: fixturelib\nVersion: 2.0-1\nArchitecture: amd64\nFilename: pool/main/f/fixturelib/fixturelib_2.0-1_amd64.deb\nSize: {}\nSHA256: {}\n\n",
         library_v2_archive.len(),
         hex(&library_v2_archive)
+    ) + &format!(
+        "Package: libdich-common\nVersion: 1.0-1\nArchitecture: amd64\nFilename: pool/main/libd/libdich-common/libdich-common_1.0-1_amd64.deb\nSize: {}\nSHA256: {}\n\n",
+        common_archive.len(),
+        hex(&common_archive)
+    ) + &format!(
+        "Package: dich-plugin\nVersion: 1.0-1\nArchitecture: amd64\nDepends: libdich-common (= 1.0-1)\nFilename: pool/main/d/dich-plugin/dich-plugin_1.0-1_amd64.deb\nSize: {}\nSHA256: {}\n\n",
+        plugin_v1_archive.len(),
+        hex(&plugin_v1_archive)
+    ) + &format!(
+        "Package: dich-plugin\nVersion: 2.0-1\nArchitecture: amd64\nDepends: libdich-common (= 1.0-1)\nFilename: pool/main/d/dich-plugin/dich-plugin_2.0-1_amd64.deb\nSize: {}\nSHA256: {}\n\n",
+        plugin_v2_archive.len(),
+        hex(&plugin_v2_archive)
     );
     let mut gzip = Command::new("gzip")
         .args(["-n", "-c"])
@@ -237,6 +273,12 @@ fn signed_cached_archive_can_publish_a_tree_without_running_scripts() {
     let library_v2_blob = cache_dir.join(format!("blob-{library_v2_hash}"));
     fs::write(&library_v2_blob, library_v2_archive).unwrap();
     fs::set_permissions(library_v2_blob, fs::Permissions::from_mode(0o600)).unwrap();
+    for archive_bytes in [&common_archive, &plugin_v1_archive, &plugin_v2_archive] {
+        let hash = hex(archive_bytes);
+        let blob = cache_dir.join(format!("blob-{hash}"));
+        fs::write(&blob, archive_bytes).unwrap();
+        fs::set_permissions(blob, fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let fetch = || {
         Command::new(env!("CARGO_BIN_EXE_dich"))
             .args([
@@ -525,6 +567,206 @@ fn signed_cached_archive_can_publish_a_tree_without_running_scripts() {
         serde_json::from_slice::<serde_json::Value>(&list.stdout).unwrap()["profiles"],
         serde_json::json!([])
     );
+    assert!(!marker.exists());
+
+    let plugin_args = [
+        "--json",
+        "--config",
+        config.to_str().unwrap(),
+        "--cache",
+        cache_dir.to_str().unwrap(),
+        "--store-dir",
+        store_dir.to_str().unwrap(),
+        "--max-age-seconds",
+        "86400",
+        "--allow-missing-valid-until",
+        "install",
+        "dich-plugin",
+        "--profile",
+        "plugins",
+        "--exact-version",
+        "1.0-1",
+    ];
+    let plugin_plan = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(plugin_args)
+        .output()
+        .unwrap();
+    assert!(
+        plugin_plan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plugin_plan.stderr)
+    );
+    let plan: serde_json::Value = serde_json::from_slice(&plugin_plan.stdout).unwrap();
+    assert_eq!(plan["status"], "planned");
+    assert_eq!(plan["root_package"], "dich-plugin=1.0-1");
+    assert_eq!(
+        plan["dependency_edges"],
+        serde_json::json!([["dich-plugin=1.0-1", "libdich-common=1.0-1"]])
+    );
+
+    let plugin_install = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(plugin_args)
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert!(
+        plugin_install.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plugin_install.stderr)
+    );
+    let installed: serde_json::Value = serde_json::from_slice(&plugin_install.stdout).unwrap();
+    assert_eq!(installed["status"], "completed");
+    assert_eq!(installed["requested_package"], "dich-plugin");
+    assert_eq!(installed["maintainer_scripts_executed"], false);
+    let objects = installed["objects"].as_array().unwrap();
+    assert_eq!(objects.len(), 2);
+    let common_obj = objects
+        .iter()
+        .find(|o| o["package"] == "libdich-common")
+        .unwrap();
+    let plugin_obj = objects
+        .iter()
+        .find(|o| o["package"] == "dich-plugin")
+        .unwrap();
+    assert_eq!(common_obj["publication"], "published");
+    assert_eq!(plugin_obj["publication"], "published");
+
+    let common_path = common_obj["explicit_path"].as_str().unwrap();
+    let plugin_path = plugin_obj["explicit_path"].as_str().unwrap();
+    assert!(fs::metadata(common_path).unwrap().is_file());
+    assert!(fs::metadata(plugin_path).unwrap().is_file());
+
+    let checker = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../dich-elf/tests/fixtures/dlmopen-checker"
+    );
+    let runtime_check = Command::new(checker)
+        .arg(common_path)
+        .arg(plugin_path)
+        .arg("43")
+        .status()
+        .unwrap();
+    assert!(
+        runtime_check.success(),
+        "runtime loading installed signed DSO closure failed"
+    );
+
+    let first_plugin_generation = installed["generation_id"].as_str().unwrap().to_owned();
+
+    let db = dich_store::MetadataDb::open_existing(&store_dir).unwrap();
+    let profile_gen = db.read_profile_generation("plugins").unwrap().unwrap();
+    assert_eq!(
+        profile_gen.requested_package.as_deref(),
+        Some("dich-plugin")
+    );
+    let graph = db.read_reference_graph(&profile_gen.graph_id).unwrap();
+    assert_eq!(graph.roots(), &[plugin_obj["object_id"].as_str().unwrap()]);
+    assert_eq!(
+        graph.edges(),
+        &[(
+            plugin_obj["object_id"].as_str().unwrap().to_owned(),
+            common_obj["object_id"].as_str().unwrap().to_owned()
+        )]
+    );
+    drop(db);
+
+    let plugin_v2_args = [
+        "--json",
+        "--config",
+        config.to_str().unwrap(),
+        "--cache",
+        cache_dir.to_str().unwrap(),
+        "--store-dir",
+        store_dir.to_str().unwrap(),
+        "--max-age-seconds",
+        "86400",
+        "--allow-missing-valid-until",
+        "install",
+        "dich-plugin",
+        "--profile",
+        "plugins",
+        "--exact-version",
+        "2.0-1",
+        "--yes",
+    ];
+    let plugin_v2_install = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(plugin_v2_args)
+        .output()
+        .unwrap();
+    assert!(
+        plugin_v2_install.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plugin_v2_install.stderr)
+    );
+    let installed_v2: serde_json::Value =
+        serde_json::from_slice(&plugin_v2_install.stdout).unwrap();
+    let objects_v2 = installed_v2["objects"].as_array().unwrap();
+    let common_obj_v2 = objects_v2
+        .iter()
+        .find(|o| o["package"] == "libdich-common")
+        .unwrap();
+    let plugin_obj_v2 = objects_v2
+        .iter()
+        .find(|o| o["package"] == "dich-plugin")
+        .unwrap();
+    assert_eq!(common_obj_v2["publication"], "reused");
+    assert_eq!(common_obj_v2["object_id"], common_obj["object_id"]);
+    assert_eq!(plugin_obj_v2["publication"], "published");
+
+    let plugin_v2_path = plugin_obj_v2["explicit_path"].as_str().unwrap();
+    let runtime_check_v2 = Command::new(checker)
+        .arg(common_path)
+        .arg(plugin_v2_path)
+        .arg("44")
+        .status()
+        .unwrap();
+    assert!(
+        runtime_check_v2.success(),
+        "runtime loading v2 installed signed DSO closure failed"
+    );
+
+    let rollback_args = [
+        "--json",
+        "--store-dir",
+        store_dir.to_str().unwrap(),
+        "rollback",
+        "--profile",
+        "plugins",
+    ];
+    let rollback = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(rollback_args)
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert!(rollback.status.success());
+    let rollback_res: serde_json::Value = serde_json::from_slice(&rollback.stdout).unwrap();
+    assert_eq!(rollback_res["generation_id"], first_plugin_generation);
+
+    let runtime_check_rb = Command::new(checker)
+        .arg(common_path)
+        .arg(plugin_path)
+        .arg("43")
+        .status()
+        .unwrap();
+    assert!(
+        runtime_check_rb.success(),
+        "runtime loading after rollback failed"
+    );
+
+    let remove_plugin = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--store-dir",
+            store_dir.to_str().unwrap(),
+            "remove",
+            "dich-plugin",
+            "--profile",
+            "plugins",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(remove_plugin.status.success());
     assert!(!marker.exists());
 }
 

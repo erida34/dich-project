@@ -177,6 +177,72 @@ impl DebianUniverse {
         let c = self.candidates.get(id)?;
         Some(format!("{}={}", c.name, c.version.as_str()))
     }
+    pub(crate) fn solution_graph(
+        &self,
+        requested: &Requirement,
+        selected: &[usize],
+    ) -> Result<(String, Vec<(String, String)>), UniverseError> {
+        let roots: Vec<_> = selected
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| {
+                let Some(candidate) = self.candidates.get(**id) else {
+                    return false;
+                };
+                requested
+                    .0
+                    .iter()
+                    .any(|relation| dependency_matches(candidate, relation))
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if roots.len() != 1 {
+            return Err(UniverseError);
+        }
+
+        let mut edges = BTreeSet::new();
+        for (from, id) in selected.iter().enumerate() {
+            let candidate = self.candidates.get(*id).ok_or(UniverseError)?;
+            for group in candidate
+                .relations
+                .pre_depends()
+                .iter()
+                .chain(candidate.relations.depends())
+            {
+                let matches: Vec<_> = selected
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, target_id)| {
+                        let Some(target) = self.candidates.get(**target_id) else {
+                            return false;
+                        };
+                        group
+                            .alternatives()
+                            .iter()
+                            .any(|relation| dependency_matches(target, relation))
+                    })
+                    .map(|(index, _)| index)
+                    .collect();
+                if matches.len() != 1 {
+                    return Err(UniverseError);
+                }
+                edges.insert((from, matches[0]));
+            }
+        }
+
+        let label = |index: usize| {
+            selected
+                .get(index)
+                .and_then(|id| self.label(*id))
+                .ok_or(UniverseError)
+        };
+        let root = label(roots[0])?;
+        let edges = edges
+            .into_iter()
+            .map(|(from, to)| Ok((label(from)?, label(to)?)))
+            .collect::<Result<Vec<_>, UniverseError>>()?;
+        Ok((root, edges))
+    }
 }
 fn compare(version: &DebianVersion, relation: &DependencyRelation) -> bool {
     relation
@@ -393,5 +459,51 @@ impl Provider for DebianUniverse {
                 .chain(a.relations.breaks())
                 .flat_map(|g| g.alternatives())
                 .any(|relation| matches(b, relation))
+    }
+}
+
+#[cfg(test)]
+mod solution_graph_tests {
+    use super::*;
+    use crate::parse_control_stanzas;
+    use dich_core::resolver::{SearchLimits, resolve};
+
+    #[test]
+    fn selected_dependencies_form_one_exact_rooted_graph() {
+        let stanzas = parse_control_stanzas(
+            b"Package: app\nVersion: 1\nArchitecture: amd64\nDepends: lib\n\nPackage: lib\nVersion: 2\nArchitecture: amd64\nDepends: base\n\nPackage: base\nVersion: 3\nArchitecture: amd64\n",
+        )
+        .unwrap();
+        let universe = DebianUniverse::from_stanzas(&stanzas, "amd64").unwrap();
+        let request = universe.require("app").unwrap();
+        let solution = resolve(&universe, vec![request.clone()], SearchLimits::default()).unwrap();
+        let (root, edges) = universe
+            .solution_graph(&request, &solution.selected)
+            .unwrap();
+        assert_eq!(root, "app=1");
+        assert_eq!(
+            edges,
+            vec![
+                ("app=1".into(), "lib=2".into()),
+                ("lib=2".into(), "base=3".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn ambiguous_selected_alternatives_are_not_written_as_dependency_edges() {
+        let stanzas = parse_control_stanzas(
+            b"Package: app\nVersion: 1\nArchitecture: amd64\nDepends: left | right, extra\n\nPackage: left\nVersion: 1\nArchitecture: amd64\nDepends: extra\n\nPackage: right\nVersion: 1\nArchitecture: amd64\nDepends: extra\n\nPackage: extra\nVersion: 1\nArchitecture: amd64\n",
+        )
+        .unwrap();
+        let universe = DebianUniverse::from_stanzas(&stanzas, "amd64").unwrap();
+        let request = universe.require("app").unwrap();
+        let selected = vec![
+            universe.names["app"][0],
+            universe.names["left"][0],
+            universe.names["right"][0],
+            universe.names["extra"][0],
+        ];
+        assert!(universe.solution_graph(&request, &selected).is_err());
     }
 }

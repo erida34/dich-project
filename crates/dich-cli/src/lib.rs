@@ -718,7 +718,9 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                                 "package":package,
                                 "exact_version":exact_version,
                                 "profile":profile,
+                                "root_package":plan.root,
                                 "packages":plan.packages,
+                                "dependency_edges":plan.dependency_edges,
                                 "pins":pins,
                                 "requires_confirmation":"--yes"
                             })

@@ -58,6 +58,8 @@ pub struct MetadataPin {
 pub struct MetadataPlan {
     pub pins: Vec<MetadataPin>,
     pub packages: Vec<String>,
+    pub root: String,
+    pub dependency_edges: Vec<(String, String)>,
     pub trace: Vec<String>,
 }
 
@@ -210,13 +212,21 @@ impl AuthenticatedUniverse {
         clock: impl Fn() -> SystemTime + Copy,
     ) -> Result<MetadataPlan, PlanError> {
         self.recheck(journal, &clock)?;
-        let result = resolve(&self.universe, vec![request], SearchLimits::default());
+        let result = resolve(
+            &self.universe,
+            vec![request.clone()],
+            SearchLimits::default(),
+        );
         self.recheck(journal, &clock)?;
         let result = result.map_err(|error| match error {
             ResolveError::LimitExceeded => PlanError::Limit,
             ResolveError::Unsupported { trace } => PlanError::Unsupported(trace),
             ResolveError::Unsatisfiable { trace } => PlanError::Unsatisfiable(trace),
         })?;
+        let (root, dependency_edges) = self
+            .universe
+            .solution_graph(&request, &result.selected)
+            .map_err(|_| PlanError::Unsupported(vec!["dependency graph is ambiguous".into()]))?;
         let identities: BTreeSet<(String, String)> = result
             .selected
             .iter()
@@ -291,6 +301,8 @@ impl AuthenticatedUniverse {
         Ok(MetadataPlan {
             pins,
             packages,
+            root,
+            dependency_edges,
             trace: result.trace,
         })
     }
