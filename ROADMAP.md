@@ -35,7 +35,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Adopt canonical store identity hashing verified content plus source/build context and policy version; collision handling and dedup semantics (identity model only; object reuse not implemented).
 - [x] Crash-safe staging, fsync, atomic rename, permissions, SQLite metadata (WAL with durability policy), ownership and locking (experimental Linux local-filesystem library subset; process-interruption tests passed, physical power loss unverified).
 - [x] Reference graph, store inspect/verify and read-only immutable store convention (experimental Linux library APIs; local-metadata verification and owner-enforced modes, not hard immutability or GC roots).
-- [ ] `dich fetch`, `dich inspect`, `dich store verify`, `dich store ls` with negative tests for hostile archives and concurrent operations.
+- [x] `dich fetch`, `dich inspect`, `dich store verify`, `dich store ls` with negative tests for hostile archives and concurrent operations (experimental, Linux-only; live signed Ubuntu fetch verified through explicit HTTP CONNECT proxy; no activation or installability claim).
 
 ## Phase 4 — compatibility analyzer and opt-in relocation (v0.5.x)
 - [ ] Identify ELF objects, interpreter, SONAME, NEEDED, RPATH/RUNPATH, dlopen risks, dynamic loader interactions, symbol versions and libc constraints.

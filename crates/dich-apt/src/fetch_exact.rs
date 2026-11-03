@@ -1,6 +1,6 @@
 //! Exact artifact download through authenticated cached Release and Packages metadata.
 use crate::cache::{CacheError, FailurePoint};
-use crate::transport::{HttpsTransport, Transport};
+use crate::transport::{HttpConnectProxy, HttpsTransport, Transport};
 use crate::{
     AuthorizedArtifact, FreshnessPolicy, IndexLimits, IndexedArtifact, SnapshotJournal, Source,
     authorize_artifact, choose_index_format, select_indexed_artifact,
@@ -58,6 +58,25 @@ pub fn fetch_exact(
         policy,
         request,
         &mut HttpsTransport::new(),
+        SystemTime::now,
+    )
+}
+
+/// Fetch one exact package through an explicitly supplied HTTP CONNECT proxy.
+pub fn fetch_exact_with_proxy(
+    source: &Source,
+    journal: &SnapshotJournal,
+    policy: FreshnessPolicy,
+    request: FetchRequest<'_>,
+    proxy: &HttpConnectProxy,
+) -> Result<FetchResult, FetchExactError> {
+    let mut transport = HttpsTransport::with_proxy(proxy).map_err(|_| FetchExactError::Artifact)?;
+    fetch_exact_with_transport(
+        source,
+        journal,
+        policy,
+        request,
+        &mut transport,
         SystemTime::now,
     )
 }

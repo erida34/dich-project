@@ -44,7 +44,14 @@ If the repository omits `Valid-Until`, `--allow-missing-valid-until` explicitly 
 dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 plan hello --distribution ubuntu --suite noble --architecture amd64
 ```
 
-To download one exact artifact from an already updated, authenticated cache with exactly one configured source, select its component and version explicitly:
+To download one exact artifact from an already updated, authenticated cache with exactly one configured source, select its component and version explicitly. Where direct connections are unavailable, network commands accept an explicit unauthenticated HTTP CONNECT proxy; proxy environment variables are ignored:
+
+```sh
+dich --https-proxy http://proxy.example:8080 --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 update
+dich --https-proxy http://proxy.example:8080 --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 fetch package --exact-version 1.2-3 --component main
+```
+
+The HTTPS origin certificate and signed repository metadata remain verified. An intercepting proxy with an untrusted certificate is rejected. Proxy credentials and environment-based proxy discovery are unsupported (ADR 0021).
 
 ```sh
 dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 fetch hello --exact-version 1.0-1 --component main

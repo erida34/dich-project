@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 use crate::transport::{
-    FetchError, HttpsTransport, NetworkResponse, Transport, fetch_with_transport, resolve_redirect,
+    FetchError, HttpConnectProxy, HttpsTransport, NetworkResponse, Transport, fetch_with_transport,
+    resolve_redirect,
 };
 use crate::{
     Distribution, FreshnessPolicy, IndexFormat, SourcePolicy, authorize_artifact, import_sources,
@@ -13,6 +14,23 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 use url::Url;
+
+#[test]
+fn explicit_proxy_accepts_only_credential_free_http_authorities() {
+    assert!(HttpConnectProxy::parse("http://127.0.0.1:8080").is_ok());
+    assert!(HttpConnectProxy::parse("http://[::1]:3128/").is_ok());
+    for value in [
+        "https://proxy.example:443",
+        "socks5://proxy.example:1080",
+        "http://proxy.example",
+        "http://user:password@proxy.example:8080",
+        "http://proxy.example:8080/path",
+        "http://proxy.example:8080/?token=x",
+        "http://proxy.example:8080/#fragment",
+    ] {
+        assert!(HttpConnectProxy::parse(value).is_err(), "accepted {value}");
+    }
+}
 
 #[test]
 fn metadata_download_authenticates_and_checks_signed_index() {

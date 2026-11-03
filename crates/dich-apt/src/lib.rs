@@ -11,7 +11,9 @@ mod artifact;
 #[cfg(target_os = "linux")]
 mod fetch_exact;
 #[cfg(target_os = "linux")]
-pub use fetch_exact::{FetchExactError, FetchRequest, FetchResult, FetchState, fetch_exact};
+pub use fetch_exact::{
+    FetchExactError, FetchRequest, FetchResult, FetchState, fetch_exact, fetch_exact_with_proxy,
+};
 #[cfg(target_os = "linux")]
 mod cache;
 #[cfg(target_os = "linux")]
@@ -45,11 +47,13 @@ mod resolver_policy;
 mod sources;
 pub use resolver_policy::check_release_policy;
 mod transport;
-pub use transport::{FetchError, FetchedIndex, fetch_packages_index, fetch_signed_release};
+pub use transport::{
+    FetchError, FetchedIndex, HttpConnectProxy, fetch_packages_index, fetch_signed_release,
+};
 #[cfg(target_os = "linux")]
 mod update;
 #[cfg(target_os = "linux")]
-pub use update::{UpdateError, UpdateReport, update_source};
+pub use update::{UpdateError, UpdateReport, update_source, update_source_with_proxy};
 #[cfg(target_os = "linux")]
 mod query;
 #[cfg(target_os = "linux")]

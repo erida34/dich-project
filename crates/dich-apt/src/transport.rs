@@ -15,6 +15,29 @@ use url::Url;
 const MAX_REDIRECTS: usize = 5;
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Explicit unauthenticated HTTP CONNECT proxy for HTTPS origins.
+#[derive(Clone)]
+pub struct HttpConnectProxy(String);
+
+impl HttpConnectProxy {
+    pub fn parse(value: &str) -> Result<Self, FetchError> {
+        let url = Url::parse(value).map_err(|_| FetchError::InvalidUrl)?;
+        if value.len() > 2048
+            || url.scheme() != "http"
+            || url.host_str().is_none()
+            || url.port().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || !matches!(url.path(), "" | "/")
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(FetchError::InvalidUrl);
+        }
+        Ok(Self(url.to_string()))
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum FetchError {
     InvalidUrl,
@@ -211,15 +234,30 @@ impl Error for FetchError {}
 
 impl HttpsTransport {
     pub(crate) fn new() -> Self {
-        let agent = ureq::AgentBuilder::new()
+        Self {
+            agent: Self::builder().build(),
+        }
+    }
+
+    pub(crate) fn with_proxy(proxy: &HttpConnectProxy) -> Result<Self, FetchError> {
+        Self::build(proxy)
+    }
+
+    fn builder() -> ureq::AgentBuilder {
+        ureq::AgentBuilder::new()
             .https_only(true)
             .redirects(0)
             .try_proxy_from_env(false)
             .timeout_connect(Duration::from_secs(15))
             .timeout_read(Duration::from_secs(30))
             .timeout_write(Duration::from_secs(30))
-            .build();
-        Self { agent }
+    }
+
+    fn build(proxy: &HttpConnectProxy) -> Result<Self, FetchError> {
+        let proxy = ureq::Proxy::new(&proxy.0).map_err(|_| FetchError::InvalidUrl)?;
+        let builder = Self::builder().proxy(proxy);
+        let agent = builder.build();
+        Ok(Self { agent })
     }
 }
 

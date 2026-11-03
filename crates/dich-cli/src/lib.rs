@@ -15,6 +15,9 @@ pub struct Cli {
     /// Existing protected store directory (never created by read commands)
     #[arg(long, global = true, default_value = "/var/lib/dich")]
     pub store_dir: PathBuf,
+    /// Explicit HTTP CONNECT proxy URL (no credentials; TLS validation remains enabled)
+    #[arg(long, global = true)]
+    pub https_proxy: Option<String>,
     /// Explicit maximum age for signed Release metadata, in seconds
     #[arg(long, global = true)]
     pub max_age_seconds: Option<u64>,
@@ -396,6 +399,16 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Update => {
             #[cfg(target_os = "linux")]
             {
+                let proxy = cli
+                    .https_proxy
+                    .as_deref()
+                    .map(dich_apt::HttpConnectProxy::parse)
+                    .transpose()
+                    .map_err(|_| CliError {
+                        code: "invalid_proxy",
+                        message: "proxy must be an unauthenticated http://host:port URL",
+                        trace: Vec::new(),
+                    })?;
                 let age = cli.max_age_seconds.ok_or(CliError {
                     code: "freshness_policy_required",
                     message: "specify --max-age-seconds explicitly",
@@ -424,12 +437,21 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 })?;
                 let mut indices = 0usize;
                 for source in &sources {
-                    let report = dich_apt::update_source(
-                        source,
-                        &cache,
-                        freshness,
-                        dich_apt::IndexLimits::default(),
-                    )
+                    let report = match proxy.as_ref() {
+                        Some(proxy) => dich_apt::update_source_with_proxy(
+                            source,
+                            &cache,
+                            freshness,
+                            dich_apt::IndexLimits::default(),
+                            proxy,
+                        ),
+                        None => dich_apt::update_source(
+                            source,
+                            &cache,
+                            freshness,
+                            dich_apt::IndexLimits::default(),
+                        ),
+                    }
                     .map_err(|_| CliError {
                         code: "update_failed",
                         message: "repository update failed; earlier cache entries may have changed",
@@ -465,6 +487,16 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             #[cfg(target_os = "linux")]
             {
+                let proxy = cli
+                    .https_proxy
+                    .as_deref()
+                    .map(dich_apt::HttpConnectProxy::parse)
+                    .transpose()
+                    .map_err(|_| CliError {
+                        code: "invalid_proxy",
+                        message: "proxy must be an unauthenticated http://host:port URL",
+                        trace: Vec::new(),
+                    })?;
                 let age = cli.max_age_seconds.ok_or(CliError {
                     code: "freshness_policy_required",
                     message: "specify --max-age-seconds explicitly",
@@ -505,7 +537,21 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     version: &exact_version,
                     max_bytes,
                 };
-                let artifact=dich_apt::fetch_exact(&sources[0],&journal,freshness,request).map_err(|_| CliError { code:"fetch_failed",message:"could not authenticate, download and cache the requested artifact",trace:Vec::new() })?;
+                let artifact = match proxy.as_ref() {
+                    Some(proxy) => dich_apt::fetch_exact_with_proxy(
+                        &sources[0],
+                        &journal,
+                        freshness,
+                        request,
+                        proxy,
+                    ),
+                    None => dich_apt::fetch_exact(&sources[0], &journal, freshness, request),
+                }
+                .map_err(|_| CliError {
+                    code: "fetch_failed",
+                    message: "could not authenticate, download and cache the requested artifact",
+                    trace: Vec::new(),
+                })?;
                 let state = match artifact.state {
                     dich_apt::FetchState::Downloaded => "downloaded",
                     dich_apt::FetchState::Cached => "cached",

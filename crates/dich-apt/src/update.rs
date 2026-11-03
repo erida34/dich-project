@@ -1,7 +1,8 @@
 //! Authenticated update of a single explicitly configured source.
 use crate::cache::FailurePoint;
 use crate::transport::{
-    HttpsTransport, Transport, fetch_index_with_transport, fetch_release_with_transport,
+    HttpConnectProxy, HttpsTransport, Transport, fetch_index_with_transport,
+    fetch_release_with_transport,
 };
 use crate::{
     FreshnessPolicy, IndexLimits, SnapshotJournal, Source, choose_index_format, validate_release,
@@ -40,6 +41,25 @@ pub fn update_source(
         policy,
         limits,
         &mut HttpsTransport::new(),
+        SystemTime::now,
+    )
+}
+
+/// Refresh one source through an explicitly supplied HTTP CONNECT proxy.
+pub fn update_source_with_proxy(
+    source: &Source,
+    journal: &SnapshotJournal,
+    policy: FreshnessPolicy,
+    limits: IndexLimits,
+    proxy: &HttpConnectProxy,
+) -> Result<UpdateReport, UpdateError> {
+    let mut transport = HttpsTransport::with_proxy(proxy).map_err(|_| UpdateError::Fetch)?;
+    update_with_transport(
+        source,
+        journal,
+        policy,
+        limits,
+        &mut transport,
         SystemTime::now,
     )
 }
