@@ -22,7 +22,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 
 ## Phase 2 — dependency resolver (v0.3.x)
 - [x] Explicit release/architecture policy. Initially *same distro release and arch only*; no cross-release mixing.
-- [ ] Model Depends, Pre-Depends, conflicts, provides, alternatives, version constraints, multiarch qualifiers, essential/system base boundaries.
+- [x] Model Depends, Pre-Depends, conflicts, provides, alternatives, version constraints, multiarch qualifiers, essential/system base boundaries.
 - [ ] Deterministic resolver and `dich plan` with explainable decisions, cycles/conflicts/unsat traces.
 - [ ] Pin exact package version, repository snapshot digest, architecture, source identity and artifact SHA256 in lock/plan.
 - [ ] Reject operations involving unsupported dpkg actions, service managers, kernel modules, unknown package triggers or global state.

@@ -41,3 +41,5 @@ Phase 1 regression coverage maps threats to executable tests:
 These tests are scoped to the metadata and download pipeline, not extraction, installation, full system compromise or a substitute for independent security review.
 
 The initial resolver policy (ADR 0009) compares exact distribution, suite and native architecture and rejects known moving aliases. It is not yet used by a resolver, and an operator must select a genuinely immutable suite label; matching labels do not establish ABI compatibility. Freshness must be rechecked separately at use time.
+
+Relationship parsing (ADR 0010) does not authorize packages or determine whether host packages satisfy dependencies. Essential and Priority: required are separate metadata flags; resolution and any system-base policy must fail closed until implemented. Unsupported relation semantics, service integration and scripts remain blockers for installation.

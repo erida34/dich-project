@@ -13,11 +13,13 @@ pub use artifact::{
 };
 mod control;
 mod dependencies;
+mod package_relations;
 pub use control::{ControlError, ControlStanza, parse_control_stanzas};
 pub use dependencies::{
     Comparison, DependencyError, DependencyGroup, DependencyRelation, VersionConstraint,
     parse_dependencies,
 };
+pub use package_relations::{MultiArch, PackageRelations, SystemBoundary};
 mod index;
 mod keyring;
 pub use index::{
