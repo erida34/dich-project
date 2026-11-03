@@ -13,5 +13,5 @@
 - Added source-bound canonical store identity derivation; exact reuse rechecks stored content.
 - Added an experimental protected SQLite WAL/FULL metadata store and exclusive locking.
 - Prototype publication of verified raw archives and private staged trees with bounded manual recovery; process interruptions are tested, but physical power-loss durability and activation remain unverified.
-- Experimental contextual dependency graph snapshots for registered tree identities; no GC roots, activation or object inspection yet.
+- Experimental contextual dependency graph snapshots, metadata-only object inspection and local-content verification; no GC roots or activation.
 - Project definition, developer guide, Rust workspace stub, documentation and release-pipeline scaffold.
