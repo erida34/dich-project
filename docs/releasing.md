@@ -15,3 +15,13 @@ Use semver tags `vX.Y.Z`, update changelog, validate the exact release commit, b
 
 ## Required before v1
 Versioned state migration, supported distro matrix, signed provenance strategy, SBOM, dependency audits, reproducibility investigation, real install/rollback/GC tests and private vulnerability disclosure process.
+
+## Opt-in live fetch check
+
+On a network-capable Linux test target, set `DICH_LIVE_CONFIG` to an explicit trusted single-source policy, `DICH_LIVE_CACHE` to a new private directory, `DICH_LIVE_MAX_AGE` to the chosen maximum Release age in seconds, and `DICH_LIVE_PACKAGE`, `DICH_LIVE_VERSION`, `DICH_LIVE_COMPONENT` to an exact indexed artifact. Populate the dedicated cache with `dich --config "$DICH_LIVE_CONFIG" --cache "$DICH_LIVE_CACHE" --max-age-seconds "$DICH_LIVE_MAX_AGE" update`. If the repository lacks Valid-Until, add `--allow-missing-valid-until` to update and explicitly set `DICH_LIVE_ALLOW_MISSING_VALID_UNTIL=1` for the test. Then run:
+
+```sh
+cargo test -p dich-cli --test fetch_cli live_exact_fetch_downloads_signed_artifact -- --ignored --exact
+```
+
+The test requires `downloaded`, not `cached`, and leaves the verified blob in the dedicated cache. It does not install or activate it.
