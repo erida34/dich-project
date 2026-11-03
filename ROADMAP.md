@@ -61,7 +61,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] HTTPS/proxy/timeouts/retries, bandwidth and disk limits, cancellation, offline mode, file descriptor/race abuse tests (ADR 0033).
 - [x] Security review of key handling, filesystem/TOCTOU attacks, paths, symlinks, privilege model and container limits (ADR 0034).
 - [x] Benchmarks for cold/warm metadata sync, package dedup and GC; performance budgets (ADR 0035).
-- [ ] Integration tests on supported Debian/Ubuntu LTS/current releases; documented support matrix and unsupported targets.
+- [x] Integration tests on supported Debian/Ubuntu LTS/current releases; documented support matrix and unsupported targets (ADR 0036).
 
 ## Phase 7 — public release (v1.0.0 only after criteria)
 - [ ] Polish README/getting started, installation and uninstall, config examples, FAQ, man pages, shell completions, CHANGELOG.
