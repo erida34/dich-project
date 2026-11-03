@@ -142,7 +142,16 @@ fn rejects_corrupt_state_and_concurrent_writer() {
         .write(true)
         .open(dir.path().join(format!("{name}.lock")))
         .unwrap();
-    flock(&lock, FlockOperation::NonBlockingLockExclusive).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match flock(&lock, FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => break,
+            Err(rustix::io::Errno::AGAIN) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            Err(error) => panic!("failed to acquire test lock: {error}"),
+        }
+    }
     assert!(matches!(
         journal.record_at(&release, now, FailurePoint::None),
         Err(CacheError::Busy)
