@@ -1,6 +1,6 @@
 # Beta Testing, Issue Triage, Threat Model, and Compatibility Limitations
 
-This document outlines the operational policies for external beta testing, bug triage, threat model analysis, and explicit runtime compatibility limitations for Dich.
+This document outlines the operational policies for external beta testing, bug triage and compatibility limits. The current internal threat review is in [`../dich-project-threat-model.md`](../dich-project-threat-model.md); no external tester results are claimed.
 
 ---
 
@@ -37,10 +37,7 @@ To maintain high software reliability and security posture, reported issues are 
 | **P3 - Minor / UX / Docs** | Cosmetic CLI output issue, documentation clarification, non-blocking warning message, shell completion edge case. | < 7 days | Standard backlog |
 
 ### 2.1 Security Vulnerability Handling
-Security vulnerabilities must **not** be reported through public GitHub issues. Responsible disclosure follows the process defined in `SECURITY.md`:
-- Send encrypted reports to the maintainer contact with reproduction artifacts.
-- CVE identifiers are requested upon confirmation of reproducible vulnerabilities.
-- Adversarial regression tests are committed alongside fixes to prevent regression.
+Security vulnerabilities must **not** be reported through public GitHub issues. Use GitHub's private **Report a vulnerability** flow only after the repository owner enables it. No separate maintainer security contact is configured yet, so external beta recruitment must wait until a private reporting route is confirmed. Adversarial regression tests should accompany confirmed fixes.
 
 ---
 
@@ -50,13 +47,13 @@ Dich operates in hostile environments where repositories, packages, network conn
 
 | Threat Boundary | Attack Vector | Attacker Objective | Dich Defense Mechanism | Verification Test Suite |
 | :--- | :--- | :--- | :--- | :--- |
-| **Repository Metadata** | Forged `InRelease` or modified `Packages.xz` | Distribute malicious package hashes or metadata | Strict `gpgv` signature verification against operator keyrings, digest chaining (`Release` -> `Packages` -> `.deb`), fail-closed validation | `crates/dich-apt/tests/repository_signatures.rs`, `crates/dich-cli/tests/network_and_resilience.rs` |
-| **Network & Transport** | Man-in-the-Middle (MitM), rogue proxy, replay attacks | Tamper with downloads, freeze client on old versions | TLS enforced via `rustls`, anti-rollback floor checks, Valid-Until/Date expiration checks, strict URL/proxy sanitization | `crates/dich-apt/tests/artifact_fetch.rs`, `crates/dich-cli/tests/network_and_resilience.rs` |
-| **Archive Envelope** | Directory traversal (`../../etc/shadow`), absolute paths (`/bin/sh`), symlink traps | Escape destination directory, overwrite host system files | Confined staging with Linux `openat2` (`RESOLVE_BENEATH \| RESOLVE_NO_SYMLINKS`), strict archive parser path rejection | `crates/dich-deb/tests/staging.rs`, `crates/dich-cli/tests/security_audit_and_toctou.rs` |
-| **Archive Payloads** | Archive bombs (compression ratio abuse), infinite streams | Exhaust host memory or disk space | Strict file size and decompressed byte limits, `RateLimitedReader`, `prlimit` CPU/memory caps, free disk checks via `statvfs` | `crates/dich-deb/tests/archive_bombs.rs`, `crates/dich-cli/tests/network_and_resilience.rs` |
-| **Package Lifecycle** | Malicious maintainer scripts (`preinst`, `postinst`, `prerm`, `postrm`) | Arbitrary code execution during package setup | Maintainer scripts are **never executed**. Control files are parsed as read-only diagnostic metadata only | `crates/dich-deb/tests/scripts.rs`, `crates/dich-engine/tests/` |
-| **Store Filesystem** | Hardlink attacks, symlink races, TOCTOU swaps | Hijack store database (`metadata.sqlite3`) or mutate committed trees | Strict ownership/mode checks (0700/0600), immutable object files (0400), exclusive `flock` on `metadata.lock`, atomic rename without replace | `crates/dich-store/tests/store_metadata.rs`, `crates/dich-cli/tests/security_audit_and_toctou.rs` |
-| **Host System State** | Tampering with `/etc`, `/usr`, `/var/lib/dpkg` | Conflict with host package manager or compromise host services | System directories are **never touched**. Dich operates in isolated user or store prefixes | System integration tests, `AGENTS.md` non-negotiable rules |
+| **Repository Metadata** | Forged `InRelease` or modified `Packages.xz` | Distribute malicious package hashes or metadata | `gpgv` signer allowlist, signed digest chain, fail-closed validation | `crates/dich-apt/src/signature_tests.rs`, `crates/dich-apt/tests/index_verification.rs`, `crates/dich-cli/tests/network_and_resilience.rs` |
+| **Network & Transport** | Man-in-the-Middle, hostile redirect, replay | Tamper with downloads or freeze the client on old versions | TLS validation, origin/path redirect policy, rollback floors and Release freshness checks | `crates/dich-apt/src/transport_tests.rs`, `crates/dich-apt/tests/release_freshness.rs`, `crates/dich-cli/tests/network_and_resilience.rs` |
+| **Archive Envelope** | Directory traversal, absolute paths, malicious links | Escape private staging or publish an unsafe tree | Bounded parser and descriptor-relative `openat2` staging with beneath/no-symlink constraints | `crates/dich-deb/src/lib.rs` tests, `crates/dich-deb/src/staging.rs`, `crates/dich-cli/tests/security_audit_and_toctou.rs` |
+| **Archive Payloads** | Compression bombs, oversized data, hostile ELF | Exhaust local resources or pass misleading compatibility evidence | Byte and file limits, `prlimit` helpers, `statvfs` preflight, conservative ELF reports | `crates/dich-deb/src/lib.rs`, `crates/dich-elf/src/lib.rs`, `crates/dich-cli/tests/network_and_resilience.rs` |
+| **Package Lifecycle** | Malicious maintainer scripts or triggers | Execute attacker-controlled setup code | Scripts/triggers are recorded as evidence and never run; unsupported packages fail closed | `crates/dich-deb/src/lib.rs` test `staging_never_executes_control_scripts`; `crates/dich-engine/src` |
+| **Store Filesystem** | Hardlinks, symlink races, concurrent mutation | Alter metadata or delete/replace committed objects | Ownership/mode checks, exclusive locks, descriptor-relative traversal and atomic publication | `crates/dich-store/src/lib.rs`, `crates/dich-store/tests/metadata_db.rs`, `crates/dich-cli/tests/security_audit_and_toctou.rs` |
+| **Host System State** | Accidental or malicious writes outside Dich state | Conflict with host package manager or compromise services | Dich operations use private cache/store/profile roots; no host APT/dpkg integration or script execution | `crates/dich-cli/tests/security_audit_and_toctou.rs`, `docs/adr/0001-scope.md` |
 
 ---
 
@@ -70,12 +67,12 @@ Dich adheres to a strict principle of **truth over demos**. It does **not** clai
 3. **Not a systemd or daemon manager**: Services, systemd units, SysV init scripts, udev rules, D-Bus service configs, and cron jobs inside `.deb` packages are ignored and unsupported.
 
 ### 4.2 Supported Package Class: x86-64 glibc DSO Closures
-Currently, the only package class supported for installation and profile generation is:
+Currently, the only package class supported for authenticated profile selection is:
 - **x86-64 glibc Dynamic Shared Objects (DSOs)**:
   - Single libraries or closed sets of shared libraries without host integration markers.
   - No maintainer scripts or service files.
   - Acyclic internal dynamic dependencies (`DT_NEEDED`).
-  - Strict symbol namespace isolation via `dlmopen` or explicit path loading.
+  - The CLI selects authenticated object paths in profiles; it does not execute package binaries. `dlmopen` isolates symbol lookup in the test harness only and is not a process sandbox.
   - Packages violating these constraints are conservatively rejected with machine-readable diagnostic errors (`supported: false`, `reason: unsupported_feature`).
 
 ### 4.3 Unsupported Scenarios (Fail-Closed)

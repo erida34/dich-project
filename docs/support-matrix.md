@@ -17,7 +17,7 @@ Tier 1 platforms are continuously tested in automated regression suites and veri
 
 In accordance with [ADR 0025](adr/0025-standalone-dso-allowlist.md) and [ADR 0029](adr/0029-authenticated-dso-profile-install.md):
 - **Dynamic Shared Objects (DSOs)**: Standalone `.so` libraries and acyclic DSO closures matching native `amd64` glibc ABI.
-- **Runtime Execution**: Loaded into isolated symbol namespaces via `dlmopen(LM_ID_NEWLM)`. No patching of ELF binaries, host `/usr`, or `/etc/ld.so.conf`.
+- **Profile behavior**: Dich authenticates, stores and selects supported DSO closure paths. The CLI does not load or execute package code. A `dlmopen(LM_ID_NEWLM)` fixture demonstrates symbol-namespace isolation only; it is not a process sandbox. No ELF patching or host `/usr` / `/etc/ld.so.conf` changes are performed.
 
 ## Explicitly Unsupported Targets
 

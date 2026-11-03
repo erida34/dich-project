@@ -1,6 +1,6 @@
 # Dich
 
-**Dich** is a production-oriented, version-aware Linux package store that sources **original signed Debian and Ubuntu APT repositories and `.deb` artifacts** without assuming arbitrary binary packages are relocatable. Written in Rust.
+**Dich** is an experimental, version-aware Linux package store that sources **original signed Debian and Ubuntu APT repositories and `.deb` artifacts** without assuming arbitrary binary packages are relocatable. Written in Rust.
 
 It allows multiple package versions and configurations to coexist safely in immutable content-addressed storage, deduplicates shared dependencies, tracks exact reference graphs, supports atomic profile switching and instant rollbacks, and provides safe mark-and-sweep garbage collection.
 
@@ -12,7 +12,7 @@ Dich strictly adheres to the principle of **host non-interference**: it never in
 
 - **Original APT Repositories**: Directly sources official upstream Debian and Ubuntu mirrors using cryptographic OpenPGP signature verification (`InRelease`, `Release.gpg`), digest validation, and rollback protection.
 - **Content-Addressed Store**: Deduplicates shared libraries and files across package versions in read-only (`0400`) storage.
-- **Isolated DSO Execution**: Allows applications to load isolated DSO closures into independent link-map namespaces (`dlmopen(LM_ID_NEWLM)`), preventing symbol collision and host library conflicts without binary patching.
+- **Authenticated DSO Profiles**: Selects narrowly supported x86-64 glibc DSO closures into versioned profiles and returns explicit library paths. Dich does not execute package code; the `dlmopen` fixture demonstrates symbol-namespace isolation only, not a process sandbox.
 - **Atomic Profiles & Rollback**: Profiles are managed via atomic relative symlink switches pointing to cryptographic generation manifests. Instant rollback restores previous generation states.
 - **Mark-and-Sweep Garbage Collection**: Safely identifies and sweeps unreachable objects while preserving all active profiles, rollback chains, and explicit pins. Defaults to `--dry-run`.
 - **Rootless by Default**: Operates completely unprivileged in user environments following XDG standards (`$XDG_DATA_HOME/dich`, `$XDG_CACHE_HOME/dich`, `$XDG_CONFIG_HOME/dich`). No background daemons or setuid binaries.

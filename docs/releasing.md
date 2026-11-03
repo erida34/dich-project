@@ -1,7 +1,7 @@
 # Release engineering
 
 ## Policy
-Use semver tags `vX.Y.Z`, update changelog, validate the exact release commit, build a Debian binary package, test archive contents and install/remove behavior on declared base OS images, then publish checksums and GitHub release assets. Before v1, version numbers convey interface stage, not production suitability.
+Use SemVer tags `vX.Y.Z`, update the matching changelog section, validate the exact release commit, build a Debian binary package, test archive contents and install/remove behavior on declared base OS images, then publish checksums and GitHub release assets. Release tags should be annotated and signed (`git tag -s`) and verified by a maintainer before push. The current tag workflow does not independently verify OpenPGP tag signatures; protect `v*` tags and require maintainer review in GitHub before relying on the workflow for production releases. Build provenance is not a signature of the package contents or a review of source safety. Before v1, version numbers convey interface stage, not production suitability.
 
 ## Local build
 1. Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`.

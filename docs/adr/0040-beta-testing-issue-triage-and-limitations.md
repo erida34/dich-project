@@ -33,6 +33,8 @@ Conduct and document a comprehensive threat review covering:
 - Filesystem and database durability (0700/0600 modes, 0400 object trees, exclusive `flock`, WAL mode, `synchronous = FULL`).
 - Host isolation (no modifications to host `/etc`, `/usr`, or `/var/lib/dpkg`).
 
+An internal repository-grounded review is recorded in [`dich-project-threat-model.md`](../../dich-project-threat-model.md), dated 2026-11-04. It is not an independent penetration test. It identifies signing-key and release-tag compromise, same-UID state tampering, parser resource exhaustion and the limits of DSO symbol isolation. It assumes a single trusted operator pending confirmation. External beta results and issue-triage records remain outstanding.
+
 ### 4. Explicit Compatibility Boundaries
 - Declare explicitly what Dich is and is not: Dich is **not** a general-purpose replacement for `dpkg`/`apt`, does **not** perform arbitrary binary relocation, and does **not** manage system services/daemons.
 - The supported installable package class is strictly bounded to **x86-64 glibc Dynamic Shared Object (DSO) closures** isolated via `dlmopen` or explicit path loading.
@@ -43,3 +45,4 @@ Conduct and document a comprehensive threat review covering:
 - Beta testers have a clear framework for exercising Dich safely and reporting issues effectively.
 - Triage priorities ensure security and integrity defects receive immediate attention.
 - Users are not misled by false assumptions regarding arbitrary `.deb` compatibility.
+- External beta recruitment must wait until a private vulnerability-reporting route is confirmed; `SECURITY.md` currently records that no dedicated contact is configured.
