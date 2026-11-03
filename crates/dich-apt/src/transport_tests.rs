@@ -552,3 +552,101 @@ fn actual_https_checks_certificate_and_verifies_artifact() {
     assert!(fetch_with_transport(&authorized, 1024, &mut transport, || now).is_err());
     server.join().unwrap();
 }
+
+#[test]
+fn update_rejects_hostile_responses_without_publishing_an_index() {
+    use crate::update::update_with_transport;
+    use crate::{IndexLimits, SnapshotJournal};
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    let policy =
+        FreshnessPolicy::new(Duration::from_secs(2 * 86400), Duration::ZERO, true).unwrap();
+    let original = include_bytes!("../tests/fixtures/index/Packages.xz");
+    let mut corrupt = original.to_vec();
+    corrupt[20] ^= 1;
+    for payload in [&original[..original.len() - 1], corrupt.as_slice()] {
+        let (dir, authorized) = local_authorization("https://example.org/debian");
+        let source = authorized.release().source();
+        let journal = SnapshotJournal::open(dir.path()).unwrap();
+        let mut network = Fake {
+            responses: VecDeque::from([
+                response(
+                    200,
+                    None,
+                    include_bytes!("../tests/fixtures/index/InRelease"),
+                ),
+                response(200, None, payload),
+            ]),
+            calls: vec![],
+        };
+        assert!(
+            update_with_transport(
+                source,
+                &journal,
+                policy,
+                IndexLimits::default(),
+                &mut network,
+                || now
+            )
+            .is_err()
+        );
+        assert!(
+            journal
+                .load_index_at(
+                    source,
+                    policy,
+                    "main",
+                    IndexFormat::Xz,
+                    IndexLimits::default(),
+                    now
+                )
+                .is_err()
+        );
+    }
+    for release in [
+        b"forged Release".as_slice(),
+        include_bytes!("../tests/fixtures/freshness/valid.InRelease").as_slice(),
+    ] {
+        let (dir, authorized) = local_authorization("https://example.org/debian");
+        let source = authorized.release().source();
+        let journal = SnapshotJournal::open(dir.path()).unwrap();
+        let mut network = Fake {
+            responses: VecDeque::from([response(200, None, release)]),
+            calls: vec![],
+        };
+        assert!(
+            update_with_transport(
+                source,
+                &journal,
+                policy,
+                IndexLimits::default(),
+                &mut network,
+                || now
+            )
+            .is_err()
+        );
+        assert_eq!(network.calls.len(), 1);
+        assert!(journal.load_release_at(source, policy, now).is_err());
+    }
+    let (dir, authorized) = local_authorization("https://example.org/debian");
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let mut network = Fake {
+        responses: VecDeque::from([response(
+            200,
+            None,
+            include_bytes!("../tests/fixtures/index/InRelease"),
+        )]),
+        calls: vec![],
+    };
+    assert!(
+        update_with_transport(
+            authorized.release().source(),
+            &journal,
+            policy,
+            IndexLimits::default(),
+            &mut network,
+            || now + Duration::from_secs(3 * 86400)
+        )
+        .is_err()
+    );
+    assert_eq!(network.calls.len(), 1);
+}

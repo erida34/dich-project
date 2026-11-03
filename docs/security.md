@@ -30,3 +30,12 @@ Control, relation and version parsing operate on bounded untrusted inputs. Parse
 No general `.deb` install support until there is a documented threat model, independent review of extraction/activation/GC paths, test corpus with hostile inputs, and crash/failure injection tests.
 
 Update is not atomic across indices or sources; an error may leave a partially refreshed cache, and offline queries fail closed for missing or inconsistent data. A trusted clock and protected local cache are required. Removing or rolling back the entire cache can defeat its persisted rollback floor; suite aliases have separate floors. Cross-origin redirects and proxies are unsupported. Search results are metadata, not proof of safe installation.
+
+Phase 1 regression coverage maps threats to executable tests:
+
+- Forgery and wrong keys: `signature_tests::rejects_untrusted_signer_tampering_and_missing_trust` and `transport_tests::update_rejects_hostile_responses_without_publishing_an_index`.
+- Rollback, equivocation and clock reversal: `cache_tests::rejects_equivocation_rollback_and_backwards_clock`; expiry/freeze: `rejects_expired_future_wrong_suite_or_origin`. This relies on protected state and a trustworthy clock; it cannot detect an attacker replaying a still-fresh snapshot after deleting the entire floor.
+- Checksum mismatch, truncated streams and gzip/xz expansion limits: `rejects_mismatch_truncation_unapproved_paths_and_bomb`; the update-level test also checks that corrupt or truncated index bytes are not exposed as a cached index.
+- Malicious artifact paths and redirects: `artifact::tests::rejects_url_escape_and_ambiguous_artifact_paths` and `transport_tests::redirect_policy_rejects_origin_escape_and_encoded_paths`.
+
+These tests are scoped to the metadata and download pipeline, not extraction, installation, full system compromise or a substitute for independent security review.

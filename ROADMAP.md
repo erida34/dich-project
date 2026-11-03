@@ -18,7 +18,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Download `.deb` by trusted index path; verify size and SHA256 and reject redirects/URLs outside configured policy.
 - [x] Cache metadata and artifacts atomically with expiry, timestamps, concurrency locks and integrity rechecks.
 - [x] `dich sources list`, `dich update`, `dich search`, `dich show`, `dich versions` with output fixtures and offline tests.
-- [ ] Threat tests: forged Release, wrong key, rollback/freeze, checksum mismatch, truncated indices, decompression bomb, malicious relative URL.
+- [x] Threat tests: forged Release, wrong key, rollback/freeze, checksum mismatch, truncated indices, decompression bomb, malicious relative URL.
 
 ## Phase 2 — dependency resolver (v0.3.x)
 - [ ] Explicit release/architecture policy. Initially *same distro release and arch only*; no cross-release mixing.
