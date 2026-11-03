@@ -37,6 +37,8 @@ Control paragraph, dependency-expression and Debian version parsers are availabl
 
 Artifact metadata can be selected from a verified index, bound to the same time-validated Release and downloaded over restricted HTTPS as a bounded stream into anonymous temporary storage (ADR 0006). A library-only cache stores signed Release envelopes, compressed indices and verified artifacts with source locks, a rollback floor and integrity rechecks (ADR 0007). It requires a protected local directory and trusted clock; the CLI does not initialize or use it.
 
+`sources list` reads operator policy and deb822 files through protected paths and reports configured entries only (ADR 0008). It does not contact repositories or verify their keys. The CLI's other repository commands remain planned.
+
 ## Invariants
 - No store object is published prior to full verification.
 - No version is activated without a fully validated dependency closure.

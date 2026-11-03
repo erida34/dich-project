@@ -4,14 +4,19 @@ use crate::{SignatureError, Source};
 /// writable directories, non-regular files and oversized input. Linux only.
 #[cfg(target_os = "linux")]
 pub fn read_configured_keyring(source: &Source) -> Result<Vec<u8>, SignatureError> {
+    read_trusted_file(std::path::Path::new(source.keyring()), 4 * 1024 * 1024)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn read_trusted_file(
+    path: &std::path::Path,
+    limit: usize,
+) -> Result<Vec<u8>, SignatureError> {
     use rustix::{
         fs::{self, CWD, FileType, Mode, OFlags},
         process::geteuid,
     };
-    use std::{
-        io::Read,
-        path::{Component, Path},
-    };
+    use std::{io::Read, path::Component};
 
     fn trusted(fd: &impl std::os::fd::AsFd, expected: FileType) -> Result<(), SignatureError> {
         let stat = fs::fstat(fd).map_err(|_| SignatureError::KeyringAccess)?;
@@ -24,7 +29,6 @@ pub fn read_configured_keyring(source: &Source) -> Result<Vec<u8>, SignatureErro
         Ok(())
     }
 
-    let path = Path::new(source.keyring());
     let mut parts = path.components();
     if parts.next() != Some(Component::RootDir) {
         return Err(SignatureError::KeyringAccess);
@@ -70,10 +74,10 @@ pub fn read_configured_keyring(source: &Source) -> Result<Vec<u8>, SignatureErro
     }
     let mut bytes = Vec::new();
     std::fs::File::from(current)
-        .take(4 * 1024 * 1024 + 1)
+        .take((limit + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(|_| SignatureError::KeyringAccess)?;
-    if bytes.is_empty() || bytes.len() > 4 * 1024 * 1024 {
+    if bytes.is_empty() || bytes.len() > limit {
         return Err(SignatureError::KeyringAccess);
     }
     Ok(bytes)

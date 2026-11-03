@@ -3,6 +3,33 @@ use std::io::Read;
 
 use crate::{Distribution, SourceError, SourcePolicy, sources::safe_keyring};
 
+/// Read operator policy and its source files through trusted filesystem paths.
+#[cfg(target_os = "linux")]
+pub fn load_configured_sources(path: &std::path::Path) -> Result<Vec<crate::Source>, SourceError> {
+    let bytes =
+        crate::keyring::read_trusted_file(path, MAX_CONFIG_SIZE).map_err(|_| SourceError::Io)?;
+    let policies = read_source_config(bytes.as_slice())?;
+    let mut sources = Vec::new();
+    for config in policies {
+        let input = crate::keyring::read_trusted_file(
+            std::path::Path::new(config.sources_file()),
+            MAX_CONFIG_SIZE,
+        )
+        .map_err(|_| SourceError::Io)?;
+        let input =
+            std::str::from_utf8(&input).map_err(|_| SourceError::Invalid("sources UTF-8"))?;
+        sources.extend(crate::import_sources(input, config.policy())?);
+    }
+    Ok(sources)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn load_configured_sources(_: &std::path::Path) -> Result<Vec<crate::Source>, SourceError> {
+    Err(SourceError::Unsupported(
+        "trusted source loading requires Linux",
+    ))
+}
+
 const MAX_CONFIG_SIZE: usize = 1024 * 1024;
 const MAX_SOURCES: usize = 256;
 

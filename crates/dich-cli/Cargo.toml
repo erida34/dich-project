@@ -24,8 +24,11 @@ path = "src/bin/gen_docs.rs"
 clap.workspace = true
 clap_mangen.workspace = true
 clap_complete.workspace = true
+dich-apt = { path = "../dich-apt" }
+serde_json = "1"
 
 [dev-dependencies]
+tempfile = "3"
 
 [package.metadata.deb]
 name = "dich"

@@ -31,7 +31,9 @@ mod sources;
 mod transport;
 pub use transport::FetchError;
 mod version;
-pub use config::{ConfiguredSource, parse_source_config, read_source_config};
+pub use config::{
+    ConfiguredSource, load_configured_sources, parse_source_config, read_source_config,
+};
 pub use freshness::{FreshnessError, FreshnessPolicy, ValidatedRelease, validate_release};
 pub use signatures::{
     SignatureError, VerifiedRelease, verify_configured_detached_release,

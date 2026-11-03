@@ -2,7 +2,7 @@
 
 **Dich** — a version-aware, dependency-sharing package store for Debian and Ubuntu sources, written in Rust.
 
-> **Status: experimental scaffold.** The current executable provides command discovery and deliberately rejects package operations. A library-only signature verification prototype exists, but there is no authenticated repository ingestion pipeline, package installation, immutable store or ABI relocation. Do not use it as a production package manager.
+> **Status: experimental.** The executable can list explicitly configured sources; other package operations remain unsupported. Library components verify signatures and artifacts, but the CLI has no repository update pipeline, package installation, immutable store or ABI relocation. Do not use it as a production package manager.
 
 ## Vision
 
@@ -31,7 +31,7 @@ cargo test --workspace --all-targets
 cargo run -p dich-cli -- install openssl@3
 ```
 
-The last command currently exits with an explicit **not implemented** error. CLI examples below show the *planned* interface, not working functionality.
+The last command currently exits with an explicit **not implemented** error. To inspect a trusted source policy without contacting repositories, run `dich --config /absolute/path/sources.toml sources list` (add `--json` for versioned output). Listing means configured, not authenticated or available. Other CLI examples below show the *planned* interface.
 
 ## Planned CLI
 
@@ -56,7 +56,7 @@ dich gc --dry-run
 ```text
 crates/dich-cli/      CLI binary and command definitions
 crates/dich-core/     typed domain models and invariants
-crates/dich-apt/      verified repository ingestion (planned)
+crates/dich-apt/      repository trust, metadata and cache libraries (partial)
 crates/dich-deb/      safe .deb inspection/extraction (planned)
 crates/dich-elf/      ELF and ABI analysis (planned)
 crates/dich-store/    durable shared store/profiles/GC (planned)
