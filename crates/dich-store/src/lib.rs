@@ -16,7 +16,7 @@ pub use graph::GraphOutcome;
 #[cfg(target_os = "linux")]
 pub use metadata::{MetadataDb, MetadataError};
 #[cfg(target_os = "linux")]
-pub use publication::{PublicationError, PublicationOutcome};
+pub use publication::{ArchiveVerification, PublicationError, PublicationOutcome};
 #[cfg(target_os = "linux")]
 pub use recovery::{OrphanKind, RecoveryInventory};
 #[cfg(target_os = "linux")]
@@ -132,6 +132,49 @@ impl StoreIdentity {
         }
         Ok(identity)
     }
+}
+#[cfg(target_os = "linux")]
+fn verify_identity_context(
+    id: &str,
+    context: &[u8],
+    policy: u32,
+) -> Result<(u64, [u8; 32]), crate::PublicationError> {
+    use crate::PublicationError;
+    if id.len() != 64
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(PublicationError::UnsafePath);
+    }
+    if !context.starts_with(b"dich.store.identity\0v1\0") || context.len() < 76 {
+        return Err(PublicationError::Integrity);
+    }
+    let actual = Sha256::digest(context)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    if actual != id {
+        return Err(PublicationError::Integrity);
+    }
+    let tail = &context[context.len() - 76..];
+    let size = u64::from_be_bytes(
+        tail[..8]
+            .try_into()
+            .map_err(|_| PublicationError::Integrity)?,
+    );
+    let hash: [u8; 32] = tail[8..40]
+        .try_into()
+        .map_err(|_| PublicationError::Integrity)?;
+    let actual_policy = u32::from_be_bytes(
+        tail[72..76]
+            .try_into()
+            .map_err(|_| PublicationError::Integrity)?,
+    );
+    if size == 0 || actual_policy != policy {
+        return Err(PublicationError::Integrity);
+    }
+    Ok((size, hash))
 }
 fn identity_from_material(mut material: IdentityMaterial) -> Result<StoreIdentity, IdentityError> {
     fn add(out: &mut Vec<u8>, data: &[u8]) -> Result<(), IdentityError> {
@@ -725,6 +768,54 @@ mod publication_tests {
             )
             .is_ok()
         );
+    }
+    #[test]
+    fn archive_verification_rechecks_bytes_and_local_identity() {
+        let (dir, mut db, identity) = setup();
+        let bytes = b"verified fixture";
+        let id = identity.hex();
+        assert!(db.verify_archive_object(&id).is_err());
+        publish_for_test(
+            &mut db,
+            &identity,
+            Cursor::new(bytes),
+            bytes.len() as u64,
+            Sha256::digest(bytes).into(),
+            FailurePoint::None,
+        )
+        .unwrap();
+        assert_eq!(
+            db.verify_archive_object(&id).unwrap().total_bytes,
+            bytes.len() as u64
+        );
+        let path = dir.path().join("objects").join(format!("{id}.deb"));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&path, b"tampered fixture").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        assert!(db.verify_archive_object(&id).is_err());
+        assert!(db.verify_archive_object("../bad").is_err());
+    }
+    #[test]
+    fn archive_verification_rejects_mismatched_recorded_digest() {
+        let (_dir, mut db, identity) = setup();
+        let bytes = b"verified fixture";
+        publish_for_test(
+            &mut db,
+            &identity,
+            Cursor::new(bytes),
+            bytes.len() as u64,
+            Sha256::digest(bytes).into(),
+            FailurePoint::None,
+        )
+        .unwrap();
+        let id = identity.hex();
+        db.connection
+            .execute(
+                "UPDATE verified_archives SET artifact_sha256 = ?1 WHERE object_id = ?2",
+                rusqlite::params![[0u8; 32].as_slice(), id],
+            )
+            .unwrap();
+        assert!(db.verify_archive_object(&identity.hex()).is_err());
     }
 }
 #[cfg(all(test, target_os = "linux"))]

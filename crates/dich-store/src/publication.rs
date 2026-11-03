@@ -307,3 +307,46 @@ fn compare_bytes(left: &mut impl Read, right: &mut impl Read) -> Result<(), Publ
         }
     }
 }
+
+/// Verification against local metadata, not fresh repository authentication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArchiveVerification {
+    pub total_bytes: u64,
+}
+impl MetadataDb {
+    /// Rehash one committed archive against its stored identity and digest.
+    pub fn verify_archive_object(&self, id: &str) -> Result<ArchiveVerification, PublicationError> {
+        let (context, size, digest): (Vec<u8>, i64, Vec<u8>) = self.connection.query_row(
+            "SELECT manifest, artifact_size, artifact_sha256 FROM verified_archives WHERE object_id = ?1", [id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))
+        ).map_err(|_| PublicationError::Integrity)?;
+        let (expected_size, expected_hash) = crate::verify_identity_context(id, &context, 2)?;
+        if size <= 0
+            || size as u64 != expected_size
+            || expected_size > MAX_ARCHIVE
+            || digest.as_slice() != expected_hash
+        {
+            return Err(PublicationError::Integrity);
+        }
+        let objects = open_private_dir(&self.root, "objects")?;
+        let mut file = open_existing(&objects, &format!("{id}.deb"), expected_size)?
+            .ok_or(PublicationError::Integrity)?;
+        let mut hash = Sha256::new();
+        let mut count = 0u64;
+        let mut buf = [0u8; 65536];
+        loop {
+            let n = file.read(&mut buf).map_err(|_| PublicationError::Io)?;
+            if n == 0 {
+                break;
+            }
+            count = count.checked_add(n as u64).ok_or(PublicationError::Limit)?;
+            if count > expected_size {
+                return Err(PublicationError::Integrity);
+            }
+            hash.update(&buf[..n]);
+        }
+        if count != expected_size || hash.finalize().as_slice() != expected_hash {
+            return Err(PublicationError::Integrity);
+        }
+        Ok(ArchiveVerification { total_bytes: count })
+    }
+}

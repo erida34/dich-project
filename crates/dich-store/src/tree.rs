@@ -517,23 +517,10 @@ fn decode_manifest(bytes: &[u8]) -> Result<Manifest, PublicationError> {
 impl MetadataDb {
     /// Verify a committed private tree against local metadata. Does not reauthenticate a repository.
     pub fn verify_tree_object(&self, id: &str) -> Result<TreeVerification, PublicationError> {
-        if id.len() != 64
-            || !id
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(PublicationError::UnsafePath);
-        }
         let (context, tree, size): (Vec<u8>, Vec<u8>, i64) = self.connection.query_row(
             "SELECT manifest, tree_manifest, total_size FROM verified_trees WHERE object_id = ?1", [id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))
         ).map_err(|_| PublicationError::Integrity)?;
-        let actual = Sha256::digest(&context)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>();
-        if actual != id {
-            return Err(PublicationError::Integrity);
-        }
+        crate::verify_identity_context(id, &context, 1)?;
         let manifest = decode_manifest(&tree)?;
         if size < 0 || size as u64 != manifest.total {
             return Err(PublicationError::Integrity);
