@@ -39,6 +39,8 @@ Control and Debian version parsers support cached package name/version queries, 
 
 `dich inspect --json` maps these findings to a versioned `compatibility_report` with conservative states. `supported` is limited to one dependency-free shared object that passes the explicit-path fixture policy; it never means installed or activated (ADRs 0024 and 0025).
 
+No general relocation strategy is selected. RUNPATH patching, custom loaders and mount namespaces are deferred; only the unchanged standalone DSO explicit-path case is covered (ADR 0026).
+
 ## Invariants
 - No store object is published prior to full verification.
 - No version is activated without a fully validated dependency closure.

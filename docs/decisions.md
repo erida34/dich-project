@@ -5,6 +5,7 @@
 - Future hardening of the gpgv/prlimit trust boundary and handling of mixed known/unknown signatures (ADR 0003).
 - Preservation of package-relative usr/ path vs normalized prefix, and effects on RPATH/symlinks.
 - Which ABI environments are permitted; policy for glibc, loader, NSS and packages requiring services.
+- Whether to expand the standalone DSO allowlist to dependency closures and how to load their shared dependencies without RUNPATH patching, ambient loader paths, or a custom wrapper (ADR 0027).
 - Transaction journal and recovery model; SQLite durability and filesystem synchronization.
 - Privilege boundary; user stores vs managed system store.
 - Release owner, supported Debian/Ubuntu suites, stable release repository and signing process.

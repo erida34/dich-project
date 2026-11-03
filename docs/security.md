@@ -83,3 +83,5 @@ The `dich-elf` library parses bounded single-object ELF bytes with pinned Goblin
 `.deb` inspection records bounded heuristic path and text indicators for configuration, service units, pkg-config/CMake, NSS/locale, shebangs, absolute path tokens and selected host commands (ADR 0023). Text scanning is not semantic analysis; false positives and false negatives are expected. Scripts remain metadata only, and no reported or absent indicator establishes safety.
 
 `dich inspect --json` now emits a versioned compatibility evidence report (ADR 0024). The archive remains unverified and `installable` remains false. `supported` is limited to the synthetic-fixture-validated standalone DSO rule in ADR 0025; `unsupported` records explicit known host integration, while `review_required` is the default outside that rule. Findings can be incomplete and do not authorize any store operation.
+
+General relocation alternatives are documented but not implemented (ADR 0026). No binary patching, custom loader, global search path, host mount or activation is performed.

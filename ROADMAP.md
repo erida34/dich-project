@@ -42,9 +42,10 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Scan absolute embedded paths, script shebangs, pkg-config/CMake paths, config files, maintainer triggers, service integration, NSS/locale requirements (bounded heuristic `.deb` evidence, including path-bound ELF reports; no compatibility approval; false negatives and positives remain; ADR 0023).
 - [x] Produce machine-readable compatibility report with `supported`, `unsupported`, `review_required` and evidence (schema v1; only the standalone DSO rule below can return `supported`; ADR 0024).
 - [x] Initial allowlisted relocatable *library-only* package subset and fixture-based policy; all others fail closed (single self-contained explicit-path DSO, native x86-64 only, fixture/runtime tested; no install or activation; ADR 0025).
-- [ ] Evaluate alternatives: direct original prefix, patched ELF RUNPATH, wrapper/loader, mount namespaces. ADR before selecting and implementing one.
-- [ ] If ELF patching is enabled: preserve signatures/integrity metadata, track transformed output identity, verify ABI and direct/transitive deps, test `dlopen`.
-- [ ] Integration tests on Debian/Ubuntu VM/container for at least two allowed versions with shared dependency (not mixed suites).
+- [x] Evaluate alternatives: direct original prefix, patched ELF RUNPATH, wrapper/loader, mount namespaces. ADR before selecting and implementing one (explicit object path selected only for the standalone DSO subset; general relocation rejected; ADR 0026).
+- [x] If ELF patching is enabled: preserve signatures/integrity metadata, track transformed output identity, verify ABI and direct/transitive deps, test `dlopen` (not enabled; all current objects remain byte-identical, so no transformed identity exists).
+- [x] Cross-runtime fixture smoke: two local single-DSO package versions are reported `supported`, and their unchanged objects load by explicit path on Ubuntu and Debian 13 WSL (no dependency graph, repository trust, installation, or activation claim).
+- [ ] Integration tests for at least two allowed versions sharing a dependency, without mixed suites (blocked by ADR 0027: the current supported class forbids dependencies and no safe dependency-loading boundary is selected).
 
 ## Phase 5 — profiles, transactions and garbage collection (v0.6.x)
 - [ ] Explicit profiles backed by atomic generation symlinks and manifest including immutable store references.
