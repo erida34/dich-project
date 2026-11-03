@@ -1,0 +1,11 @@
+# cargo-audit configuration for Dich
+
+[advisories]
+ignore = []
+informational_warnings = ["unmaintained", "unsound"]
+severity_threshold = "low"
+
+[output]
+deny = ["unmaintained", "unsound"]
+format = "text"
+quiet = false

@@ -19,5 +19,11 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace --all-targets
       - run: cargo doc --locked --workspace --no-deps
+      - uses: EmbarkStudios/cargo-deny-action@8371184b9282b7df336cc688f9181df27330c8e9 # v2.0.11
+        with:
+          command: check
+      - uses: rustsec/audit-check@2569c7636e090a9cf1ee9ad663e6fa6e77a2dd44 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
       - run: sh scripts/check-docs.sh
       - run: cargo run --locked -p dich-cli -- --help

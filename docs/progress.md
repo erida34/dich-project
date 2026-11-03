@@ -151,6 +151,9 @@
 
 - 2026-11-03: Phase 7 documentation and release polish milestone verified and checked: comprehensively polished `README.md` with accurate feature overview reflecting Phase 1–6 implementations, getting started for rootless and system installations, installation/uninstallation instructions, configuration examples, and complete workflow guides. Authored `docs/faq.md` answering architectural, security, and operational questions. Updated `CHANGELOG.md` following Keep a Changelog format. Regenerated all man pages and shell completions (Bash, Zsh, Fish) in `packaging/generated` via `dich-gen-docs` and validated them with `scripts/check-docs.sh`. Full workspace fmt, check, clippy (`-D warnings`), all-target tests, docs, CLI help, and documentation asset checks passed in WSL. Next: Phase 7 Line 68 (`cargo-deny`, `cargo-audit`, dependency/license policy, reproducible build guidance, SBOM and provenance).
 
+- 2026-11-03: Phase 7 supply chain security and provenance milestone verified and checked (ADR 0037): added `deny.toml` configuring `cargo-deny` with strict license allowlisting (MIT, Apache-2.0, BSD-2/3, ISC, Unicode), advisory checking, and source registry bounds. Added `audit.toml` for `cargo-audit` RustSec database scans. Documented dependency review criteria, license policy, reproducible build guidance (`SOURCE_DATE_EPOCH`, `--remap-path-prefix`), and SBOM/provenance specifications in `docs/dependency-and-license-policy.md`. Updated `.github/workflows/ci.yml` with pinned `EmbarkStudios/cargo-deny-action` and `rustsec/audit-check` gates, and updated `.github/workflows/release.yml` with SPDX SBOM generation and GitHub cryptographic provenance attestation (`actions/attest-build-provenance`). Full workspace checks passed in WSL. Next: Phase 7 Line 69 (GitHub Actions: format, clippy, tests, docs, real `.deb` install/upgrade/remove in clean target images).
+
+
 
 
 

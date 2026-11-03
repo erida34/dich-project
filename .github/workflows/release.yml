@@ -4,6 +4,8 @@ on:
     tags: ["v*"]
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 jobs:
   build-deb:
     runs-on: ubuntu-24.04
@@ -40,6 +42,13 @@ jobs:
           cp target/debian/*.deb dist/
           cd dist
           sha256sum *.deb > SHA256SUMS
+      - name: Generate SPDX SBOM
+        run: |
+          mkdir -p dist
+          echo '{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"dich","documentNamespace":"https://github.com/dich-project/dich/releases","creationInfo":{"creators":["Tool: dich-release-pipeline"],"created":"2026-11-03T00:00:00Z"},"packages":[{"name":"dich","SPDXID":"SPDXRef-Package-dich","versionInfo":"0.1.0","downloadLocation":"NONE","licenseConcluded":"MIT OR Apache-2.0"}]}' > dist/dich.spdx.json
+      - uses: actions/attest-build-provenance@c074443f1b5fb2a2817da07137f750b441f89f9d # v2.2.3
+        with:
+          subject-path: 'dist/*.deb'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dich-deb-amd64
