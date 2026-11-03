@@ -33,7 +33,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Safe extraction that prevents `..`, absolute paths, symlink/hardlink escapes, devices, FIFOs, setuid/setgid, xattrs/capabilities unless explicitly approved (private Linux staging subset; links/extensions rejected).
 - [x] Treat package scripts as metadata only; never execute in host root context.
 - [x] Adopt canonical store identity hashing verified content plus source/build context and policy version; collision handling and dedup semantics (identity model only; object reuse not implemented).
-- [ ] Crash-safe staging, fsync, atomic rename, permissions, SQLite metadata (WAL with durability policy), ownership and locking.
+- [x] Crash-safe staging, fsync, atomic rename, permissions, SQLite metadata (WAL with durability policy), ownership and locking (experimental Linux local-filesystem library subset; process-interruption tests passed, physical power loss unverified).
 - [ ] Reference graph, store inspect/verify and read-only immutable store convention; distinguish best-effort immutability from hard enforcement.
 - [ ] `dich fetch`, `dich inspect`, `dich store verify`, `dich store ls` with negative tests for hostile archives and concurrent operations.
 

@@ -10,7 +10,7 @@
 - Added bounded, read-only Debian archive inspection for uncompressed, gzip, xz and zstd members; no extraction.
 - Added Linux-only private staging of verified cached artifacts with conservative archive and path rejection; no store activation.
 - Record known maintainer script hashes and trigger-file presence without executing scripts.
-- Added source-bound canonical store identity derivation; persistence and deduplication are not implemented.
-- Added an experimental protected SQLite WAL metadata foundation; object publication and recovery are not implemented.
-- Prototype durable publication of verified raw archives; extracted store trees and automatic recovery remain unimplemented.
+- Added source-bound canonical store identity derivation; exact reuse rechecks stored content.
+- Added an experimental protected SQLite WAL/FULL metadata store and exclusive locking.
+- Prototype publication of verified raw archives and private staged trees with bounded manual recovery; process interruptions are tested, but physical power-loss durability and activation remain unverified.
 - Project definition, developer guide, Rust workspace stub, documentation and release-pipeline scaffold.
