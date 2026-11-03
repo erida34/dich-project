@@ -154,6 +154,14 @@ pub fn authorize_artifact(
     })
 }
 impl IndexedArtifact {
+    /// Source policy bound to the verified index from which this artifact was selected.
+    pub fn source(&self) -> &Source {
+        &self.source
+    }
+    /// SHA256 of the authenticated Release plaintext associated with the index.
+    pub fn release_sha256(&self) -> &[u8; 32] {
+        &self.release_digest
+    }
     pub fn name(&self) -> &str {
         &self.name
     }

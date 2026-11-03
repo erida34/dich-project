@@ -57,3 +57,5 @@ Read-only `.deb` inspection additionally rejects absolute and parent paths, norm
 Staging rejects all archive links and extension records rather than preserving them, writes files as 0600, and does not preserve ownership or xattrs. Its private temporary tree is neither immutable nor crash-durable; same-UID mutation, cleanup after crashes and future publication need separate defenses. It fails closed if openat2 or a safe root-owned `/tmp` is unavailable.
 
 Known maintainer scripts are reported only by name, size and SHA256, and trigger-file presence is recorded (ADR 0016). Their content is never executed or copied to the data staging tree. This does not yet analyze trigger semantics or all control metadata and does not authorize installation.
+
+Store identity v1 is derived only after the cache rechecks a signed authorization and artifact digest. Equal identity manifests are not sufficient proof that existing stored bytes match; actual object verification and safe deduplication remain unimplemented. Different source/snapshot contexts deliberately produce different identities.

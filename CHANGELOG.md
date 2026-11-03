@@ -10,4 +10,5 @@
 - Added bounded, read-only Debian archive inspection for uncompressed, gzip, xz and zstd members; no extraction.
 - Added Linux-only private staging of verified cached artifacts with conservative archive and path rejection; no store activation.
 - Record known maintainer script hashes and trigger-file presence without executing scripts.
+- Added source-bound canonical store identity derivation; persistence and deduplication are not implemented.
 - Project definition, developer guide, Rust workspace stub, documentation and release-pipeline scaffold.

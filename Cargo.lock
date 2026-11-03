@@ -247,6 +247,10 @@ version = "0.1.0"
 [[package]]
 name = "dich-store"
 version = "0.1.0"
+dependencies = [
+ "dich-apt",
+ "sha2",
+]
 
 [[package]]
 name = "digest"

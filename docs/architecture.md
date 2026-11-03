@@ -6,7 +6,7 @@ Original signed apt repositories -> verified metadata/artifacts -> deterministic
 ## Separation of concerns
 1. Repository source is identified by origin, suite, components, architecture and trusted signing keys. It is not a general web scraper.
 2. Package identity: name, Debian version including epoch/revision, architecture, origin, index digest, `.deb` digest and extraction/relocation policy. An identical version string from different repositories is NOT automatically identical content.
-3. Store identity: hash of normalized verified payload plus relevant transformation policy/inputs (exact formula specified in an ADR before implementation). Store references are explicit; logical packages and physical objects are distinct concepts.
+3. Store identity v1 hashes the verified artifact digest plus exact source/snapshot context and transformation policy (ADR 0017); actual stored bytes must be verified separately. Store references are explicit; logical packages and physical objects are distinct concepts.
 4. Resolution: Debian dependency relations, alternatives, virtual packages and conflicts; never infer ABI compatibility from package metadata alone.
 5. Compatibility: separately characterize data-only, library-only, executables, services/system packages; narrow allowed subset first.
 6. Store transaction: download/stage -> validate -> durable publish -> update SQLite metadata -> profile switch. Crash recovery must avoid DB/filesystem divergence.

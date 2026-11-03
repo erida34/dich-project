@@ -1,0 +1,7 @@
+# ADR 0017 — Canonical store identity
+
+Status: Accepted for identity derivation; publication and reuse are unimplemented.
+
+Identity v1 must bind verified original artifact bytes (SHA256 and size), exact name/version/architecture, authenticated Release plaintext SHA256, distribution, suite, source URI, native architecture, normalized allowed components and trusted fingerprints, artifact path, and an explicit transformation policy version. Encode a domain separator and fixed-order, length-prefixed fields before SHA256; sort set-valued fields and reject duplicates. This is a conservative source-bound identity: identical bytes from different snapshots or trust contexts do not deduplicate. A digest match alone is not permission to reuse a store object: future publication must compare complete identity manifests and verify existing object bytes, failing closed on any mismatch. No store publication, persistence, immutability or crash-safety is implied by calculating an identity.
+
+Identity v1 is SHA256 over `dich.store.identity\0v1\0`, big-endian length-prefixed scalar fields in the order above, sorted component and fingerprint sets with counts, artifact size/digests, and a big-endian policy number. `PrivateRegularFilesV1` identifies the current private staging normalization, not a promise of immutability. Semantically relevant transformation changes require a new policy version. A deliberately injected digest collision test verifies that differing manifests return `Collision`; `SameIdentity` is not a content comparison.

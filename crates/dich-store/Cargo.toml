@@ -4,3 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+
+[dependencies]
+dich-apt = { path = "../dich-apt" }
+sha2 = "0.10"
