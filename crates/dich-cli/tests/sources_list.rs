@@ -363,6 +363,23 @@ fn cached_query_cli_outputs_authenticated_fixture_offline() {
         body["artifact_sha256"],
         "0c190c47a57eaf9b339049983978ff0bec52a1d19576c679c40a366cba1d4bc6"
     );
+    let lock_path = fs::read_dir(&cache_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|p| p.file_name().unwrap().to_string_lossy().ends_with(".lock"))
+        .unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .unwrap();
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive).unwrap();
+    let busy = cached_fetch();
+    assert!(!busy.status.success());
+    assert!(busy.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&busy.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "fetch_failed");
+    drop(lock);
     fs::write(&blob, b"corrupt").unwrap();
     let bad_cached = cached_fetch();
     assert!(!bad_cached.status.success());

@@ -230,6 +230,7 @@ dependencies = [
  "dich-deb",
  "dich-store",
  "rusqlite",
+ "rustix",
  "serde_json",
  "sha2",
  "tar",
