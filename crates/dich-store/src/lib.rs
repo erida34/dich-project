@@ -4,6 +4,8 @@
 #[cfg(target_os = "linux")]
 mod graph;
 #[cfg(target_os = "linux")]
+mod inspect;
+#[cfg(target_os = "linux")]
 mod metadata;
 #[cfg(target_os = "linux")]
 mod publication;
@@ -13,6 +15,8 @@ mod recovery;
 mod tree;
 #[cfg(target_os = "linux")]
 pub use graph::GraphOutcome;
+#[cfg(target_os = "linux")]
+pub use inspect::{ObjectKind, ObjectRecord};
 #[cfg(target_os = "linux")]
 pub use metadata::{MetadataDb, MetadataError};
 #[cfg(target_os = "linux")]
@@ -817,6 +821,31 @@ mod publication_tests {
             .unwrap();
         assert!(db.verify_archive_object(&identity.hex()).is_err());
     }
+    #[test]
+    fn inspection_reports_archive_metadata_without_verifying_content() {
+        let (dir, mut db, identity) = setup();
+        let bytes = b"verified fixture";
+        publish_for_test(
+            &mut db,
+            &identity,
+            Cursor::new(bytes),
+            bytes.len() as u64,
+            Sha256::digest(bytes).into(),
+            FailurePoint::None,
+        )
+        .unwrap();
+        let id = identity.hex();
+        let records = db.list_objects().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].kind, crate::ObjectKind::Archive);
+        assert_eq!(
+            db.inspect_object(&id, crate::ObjectKind::Archive).unwrap(),
+            records[0]
+        );
+        std::fs::remove_file(dir.path().join("objects").join(format!("{id}.deb"))).unwrap();
+        assert_eq!(db.list_objects().unwrap(), records);
+        assert!(db.verify_archive_object(&id).is_err());
+    }
 }
 #[cfg(all(test, target_os = "linux"))]
 mod tree_tests {
@@ -1486,5 +1515,66 @@ mod tree_tests {
                 .unwrap();
             assert!(db.verify_tree_object(&identity.hex()).is_err(), "{variant}");
         }
+    }
+    #[test]
+    fn inspect_lists_committed_objects_without_claiming_content_verified() {
+        let (root, mut db, identity, stage) = fixture();
+        assert!(db.list_objects().unwrap().is_empty());
+        assert!(!root.path().join("objects").exists());
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let records = db.list_objects().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, identity.hex());
+        assert_eq!(records[0].kind, crate::ObjectKind::Tree);
+        assert_eq!(records[0].stored_bytes, 5);
+        assert_eq!(
+            db.inspect_object(&identity.hex(), crate::ObjectKind::Tree)
+                .unwrap(),
+            records[0]
+        );
+        assert!(
+            db.inspect_object(&identity.hex(), crate::ObjectKind::Archive)
+                .is_err()
+        );
+        assert!(
+            db.inspect_object("../bad", crate::ObjectKind::Tree)
+                .is_err()
+        );
+    }
+    #[test]
+    fn inspect_rejects_inconsistent_identity_metadata() {
+        let (_root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        db.connection
+            .execute(
+                "UPDATE verified_trees SET manifest = ?1 WHERE object_id = ?2",
+                rusqlite::params![b"bad".as_slice(), identity.hex()],
+            )
+            .unwrap();
+        assert!(db.list_objects().is_err());
+        assert!(
+            db.inspect_object(&identity.hex(), crate::ObjectKind::Tree)
+                .is_err()
+        );
+    }
+    #[test]
+    fn inspection_remains_metadata_only_after_content_corruption() {
+        let (root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let id = identity.hex();
+        let path = root
+            .path()
+            .join("objects")
+            .join(format!("{id}.tree/usr/file"));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&path, b"wrong").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        assert_eq!(
+            db.inspect_object(&id, crate::ObjectKind::Tree)
+                .unwrap()
+                .stored_bytes,
+            5
+        );
+        assert!(db.verify_tree_object(&id).is_err());
     }
 }
