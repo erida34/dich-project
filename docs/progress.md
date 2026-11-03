@@ -167,6 +167,8 @@
 
 - 2026-11-03: Release smoke coverage was aligned with the support matrix: the tag workflow now references the amd64 OCI manifest digests for Debian Bookworm/Trixie and Ubuntu Jammy/Noble, and checks installation, CLI execution, man/completions/license files, reinstall and removal in each. Docker Hub registry headers were queried from WSL to pin the manifests. YAML, embedded shell syntax and docs asset generation pass locally; no Docker daemon is available here, so image pull/install results remain unverified. Next: run the hosted CI and tag workflow after publishing the branch to GitHub.
 
+- 2026-11-03: After the repository was published, its default branch was confirmed as `master`, while CI push events only matched `main`; GitHub Actions consequently showed zero runs. Updated the CI push filter to include both `main` and `master`. Next: push this trigger correction and inspect the hosted run; release gates remain open until it completes.
+
 
 
 
