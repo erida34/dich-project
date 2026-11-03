@@ -4,6 +4,7 @@ use crate::{
     PackageRelations, SystemBoundary, parse_dependencies,
 };
 use dich_core::resolver::Provider;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UniverseError;
@@ -19,6 +20,7 @@ struct Candidate {
 #[derive(Debug)]
 pub struct DebianUniverse {
     candidates: Vec<Candidate>,
+    names: BTreeMap<String, Vec<usize>>,
 }
 impl DebianUniverse {
     /// Parses untrusted stanzas for fixture evaluation. Does not authenticate or authorize anything.
@@ -30,6 +32,7 @@ impl DebianUniverse {
             return Err(UniverseError);
         }
         let mut candidates = Vec::with_capacity(stanzas.len());
+        let mut identities = BTreeSet::new();
         for stanza in stanzas {
             let name = stanza.get("package").ok_or(UniverseError)?;
             let parsed = parse_dependencies(name).map_err(|_| UniverseError)?;
@@ -41,6 +44,9 @@ impl DebianUniverse {
             }
             let version = DebianVersion::parse(stanza.get("version").ok_or(UniverseError)?)
                 .map_err(|_| UniverseError)?;
+            if !identities.insert((name.to_owned(), version.as_str().to_owned())) {
+                return Err(UniverseError);
+            }
             let arch = stanza.get("architecture").ok_or(UniverseError)?;
             let relations = PackageRelations::from_stanza(stanza).map_err(|_| UniverseError)?;
             let simple = |groups: &[DependencyGroup]| {
@@ -65,7 +71,28 @@ impl DebianUniverse {
                 supported,
             });
         }
-        Ok(Self { candidates })
+        let mut names: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut entries = 0usize;
+        for (id, candidate) in candidates.iter().enumerate() {
+            let mut keys = BTreeSet::new();
+            keys.insert(candidate.name.as_str());
+            for relation in candidate
+                .relations
+                .provides()
+                .iter()
+                .flat_map(|group| group.alternatives())
+            {
+                keys.insert(relation.name());
+            }
+            entries = entries.checked_add(keys.len()).ok_or(UniverseError)?;
+            if entries > 250_000 {
+                return Err(UniverseError);
+            }
+            for key in keys {
+                names.entry(key.to_owned()).or_default().push(id);
+            }
+        }
+        Ok(Self { candidates, names })
     }
     pub fn require(&self, name: &str) -> Result<Requirement, UniverseError> {
         let parsed = parse_dependencies(name).map_err(|_| UniverseError)?;
@@ -118,14 +145,19 @@ impl Provider for DebianUniverse {
     type Requirement = Requirement;
     fn candidates(&self, requirement: &Requirement) -> Vec<usize> {
         let mut result = Vec::new();
+        let mut seen = BTreeSet::new();
         for relation in &requirement.0 {
-            let mut choices: Vec<_> = self
-                .candidates
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| c.supported && matches(c, relation))
-                .map(|(i, _)| i)
-                .collect();
+            let mut choices = Vec::new();
+            for id in self.names.get(relation.name()).into_iter().flatten() {
+                let candidate = &self.candidates[*id];
+                if candidate.supported && matches(candidate, relation) && !seen.contains(id) {
+                    choices.push(*id);
+                    if choices.len() + result.len() > 1024 {
+                        result.extend(choices);
+                        return result;
+                    }
+                }
+            }
             choices.sort_by(|a, b| {
                 self.candidates[*b]
                     .version
@@ -134,12 +166,24 @@ impl Provider for DebianUniverse {
                     .then_with(|| a.cmp(b))
             });
             for id in choices {
-                if !result.contains(&id) {
+                if seen.insert(id) {
                     result.push(id);
                 }
             }
         }
         result
+    }
+    fn has_unsupported(&self, requirement: &Requirement) -> bool {
+        requirement.0.iter().any(|relation| {
+            self.names
+                .get(relation.name())
+                .into_iter()
+                .flatten()
+                .any(|id| {
+                    let candidate = &self.candidates[*id];
+                    !candidate.supported && matches(candidate, relation)
+                })
+        })
     }
     fn requirements(&self, candidate: &usize) -> Vec<Requirement> {
         let Some(candidate) = self.candidates.get(*candidate) else {

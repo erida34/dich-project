@@ -6,6 +6,10 @@ pub trait Provider {
     type Requirement: Clone + Debug;
     /// Candidates must be returned in deterministic preference order.
     fn candidates(&self, requirement: &Self::Requirement) -> Vec<Self::Candidate>;
+    /// True if matching candidates were excluded because their semantics are unsupported.
+    fn has_unsupported(&self, _requirement: &Self::Requirement) -> bool {
+        false
+    }
     fn requirements(&self, candidate: &Self::Candidate) -> Vec<Self::Requirement>;
     fn incompatible(&self, left: &Self::Candidate, right: &Self::Candidate) -> bool;
 }
@@ -26,6 +30,7 @@ impl Default for SearchLimits {
 pub enum ResolveError {
     LimitExceeded,
     Unsatisfiable { trace: Vec<String> },
+    Unsupported { trace: Vec<String> },
 }
 #[derive(Debug)]
 pub struct Resolution<C> {
@@ -51,12 +56,16 @@ pub fn resolve<P: Provider>(
         provider,
         limits,
         steps: 0,
+        unsupported_seen: false,
         trace: Vec::new(),
     };
     let selected = search.visit(requirements, Vec::new(), 0)?;
     match selected {
         Some(selected) => Ok(Resolution {
             selected,
+            trace: search.trace,
+        }),
+        None if search.unsupported_seen => Err(ResolveError::Unsupported {
             trace: search.trace,
         }),
         None => Err(ResolveError::Unsatisfiable {
@@ -68,6 +77,7 @@ struct Search<'a, P: Provider> {
     provider: &'a P,
     limits: SearchLimits,
     steps: usize,
+    unsupported_seen: bool,
     trace: Vec<String>,
 }
 impl<P: Provider> Search<'_, P> {
@@ -90,6 +100,7 @@ impl<P: Provider> Search<'_, P> {
             return Ok(Some(selected));
         }
         let requirement = pending.remove(0);
+        self.unsupported_seen |= self.provider.has_unsupported(&requirement);
         let options = self.provider.candidates(&requirement);
         if options.len() > 1024 {
             return Err(ResolveError::LimitExceeded);

@@ -73,3 +73,49 @@ fn invalid_candidate_ids_fail_closed_without_panicking() {
     let requirements = universe.requirements(&999);
     assert!(resolve(&universe, requirements, SearchLimits::default()).is_err());
 }
+
+#[test]
+fn excessive_candidate_alternatives_stop_with_limit_instead_of_partial_plan() {
+    use dich_core::resolver::ResolveError;
+    let mut fixture = String::new();
+    for i in 0..1025 {
+        fixture.push_str(&format!(
+            "Package: provider-{i}\nVersion: 1\nArchitecture: amd64\nProvides: virtual\n\n"
+        ));
+    }
+    let universe =
+        DebianUniverse::from_stanzas(&parse_control_stanzas(fixture.as_bytes()).unwrap(), "amd64")
+            .unwrap();
+    assert!(matches!(
+        resolve(
+            &universe,
+            vec![universe.require("virtual").unwrap()],
+            SearchLimits::default()
+        ),
+        Err(ResolveError::LimitExceeded)
+    ));
+}
+
+#[test]
+fn unsupported_candidate_is_not_reported_as_proven_unsatisfiable() {
+    use dich_core::resolver::ResolveError;
+    let stanzas = parse_control_stanzas(
+        b"Package: root\nVersion: 1\nArchitecture: amd64\nPre-Depends: libc6\n",
+    )
+    .unwrap();
+    let universe = DebianUniverse::from_stanzas(&stanzas, "amd64").unwrap();
+    assert!(matches!(
+        resolve(
+            &universe,
+            vec![universe.require("root").unwrap()],
+            SearchLimits::default()
+        ),
+        Err(ResolveError::Unsupported { .. })
+    ));
+}
+
+#[test]
+fn duplicate_package_identity_is_not_picked_by_fixture_order() {
+    let stanzas = parse_control_stanzas(b"Package: duplicate\nVersion: 1\nArchitecture: amd64\n\nPackage: duplicate\nVersion: 1\nArchitecture: amd64\nDepends: other\n").unwrap();
+    assert!(DebianUniverse::from_stanzas(&stanzas, "amd64").is_err());
+}
