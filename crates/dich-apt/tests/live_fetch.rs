@@ -1,6 +1,6 @@
 #![cfg(target_os = "linux")]
 use dich_apt::{
-    Distribution, FreshnessPolicy, IndexFormat, SourcePolicy, authorize_artifact, fetch_artifact,
+    Distribution, FreshnessPolicy, IndexFormat, IndexLimits, SourcePolicy, authorize_artifact,
     import_sources, select_indexed_artifact, validate_release, verify_configured_inrelease,
     verify_packages_index,
 };
@@ -44,9 +44,37 @@ fn fetches_real_ubuntu_artifact_through_verified_chain() {
     let index = verify_packages_index(&release, "main", IndexFormat::Xz, &compressed).unwrap();
     let artifact = select_indexed_artifact(&index, "hello", "2.10-3build1").unwrap();
     let authorized = authorize_artifact(&fresh, &artifact, SystemTime::now()).unwrap();
-    let mut verified = fetch_artifact(&authorized, 1024 * 1024).unwrap();
+    let cache = tempfile::tempdir_in("/root").unwrap();
+    let journal = dich_apt::SnapshotJournal::open(cache.path()).unwrap();
+    journal.store_release(&fresh).unwrap();
+    journal
+        .store_index(
+            &fresh,
+            "main",
+            IndexFormat::Xz,
+            &compressed,
+            IndexLimits::default(),
+        )
+        .unwrap();
+    let (cached_release, cached_index) = journal
+        .load_index(
+            &source,
+            freshness,
+            "main",
+            IndexFormat::Xz,
+            IndexLimits::default(),
+        )
+        .unwrap();
+    let cached_artifact = select_indexed_artifact(&cached_index, "hello", "2.10-3build1").unwrap();
+    assert!(authorize_artifact(&cached_release, &cached_artifact, SystemTime::now()).is_ok());
+    let mut verified = journal.fetch_artifact(&authorized, 1024 * 1024).unwrap();
     let mut bytes = Vec::new();
     verified.read_to_end(&mut bytes).unwrap();
     assert_eq!(bytes.len(), 26006);
     assert!(bytes.starts_with(b"!<arch>\n"));
+    journal.store_artifact(&authorized, verified).unwrap();
+    let mut cached = journal.load_artifact(&authorized).unwrap();
+    let mut from_cache = Vec::new();
+    cached.read_to_end(&mut from_cache).unwrap();
+    assert_eq!(from_cache, bytes);
 }

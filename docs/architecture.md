@@ -35,7 +35,7 @@ The library also binds a Packages index to the verified Release's source and SHA
 
 Control paragraph, dependency-expression and Debian version parsers are available as library APIs (ADR 0005). They preserve relation restrictions for future evaluation; parsing does not solve dependencies or establish installation compatibility. They are not connected to the CLI.
 
-Artifact metadata can be selected from a verified index, bound to the same time-validated Release and downloaded over restricted HTTPS as a bounded stream into anonymous temporary storage (ADR 0006). Persistent cache and anti-rollback state are still absent.
+Artifact metadata can be selected from a verified index, bound to the same time-validated Release and downloaded over restricted HTTPS as a bounded stream into anonymous temporary storage (ADR 0006). A library-only cache stores signed Release envelopes, compressed indices and verified artifacts with source locks, a rollback floor and integrity rechecks (ADR 0007). It requires a protected local directory and trusted clock; the CLI does not initialize or use it.
 
 ## Invariants
 - No store object is published prior to full verification.

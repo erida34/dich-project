@@ -29,6 +29,16 @@ pub struct VerifiedRelease {
     signing_fingerprint: String,
     signing_fingerprints: Vec<String>,
     source: Source,
+    pub(crate) envelope: SignedEnvelope,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SignedEnvelope {
+    Inline(Vec<u8>),
+    Detached {
+        release: Vec<u8>,
+        signature: Vec<u8>,
+    },
 }
 impl VerifiedRelease {
     pub fn contents(&self) -> &[u8] {
@@ -234,6 +244,13 @@ fn verify(
         signing_fingerprint: signer,
         signing_fingerprints: signers,
         source: source.clone(),
+        envelope: match signature {
+            Some(signature) => SignedEnvelope::Detached {
+                release: input.to_vec(),
+                signature: signature.to_vec(),
+            },
+            None => SignedEnvelope::Inline(input.to_vec()),
+        },
     })
 }
 

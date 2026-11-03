@@ -55,21 +55,17 @@ impl VerifiedArtifact {
     pub fn metadata(&self) -> &IndexedArtifact {
         &self.metadata
     }
+    pub(crate) fn rewind(&mut self) -> Result<(), ArtifactError> {
+        self.file
+            .seek(SeekFrom::Start(0))
+            .map(|_| ())
+            .map_err(|_| ArtifactError::Io)
+    }
 }
 impl Read for VerifiedArtifact {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         self.file.read(buffer)
     }
-}
-
-/// Stream into a temporary file and return it only after size and SHA256 match.
-/// The caller must enforce network policy and timeout before providing the reader.
-pub fn verify_artifact_stream(
-    authorized: &AuthorizedArtifact,
-    reader: impl Read,
-    max_bytes: u64,
-) -> Result<VerifiedArtifact, ArtifactError> {
-    verify_artifact_stream_with_clock(authorized, reader, max_bytes, SystemTime::now)
 }
 
 pub(crate) fn verify_artifact_stream_with_clock(
@@ -133,6 +129,9 @@ impl AuthorizedArtifact {
     }
     pub fn is_valid_at(&self, now: SystemTime) -> bool {
         self.release.is_valid_at(now)
+    }
+    pub(crate) fn release(&self) -> &ValidatedRelease {
+        &self.release
     }
 }
 

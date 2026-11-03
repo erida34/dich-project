@@ -8,7 +8,7 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 
-const KEY: &str = "1BAC2C94BE8028EF099FD21F20B0D0ABB7CF4AFC";
+const KEY: &str = "F54741F2B0E1F1B32F7EE55EC9079FF55FECB8D2";
 const NOW: u64 = 1_793_707_200;
 
 fn source() -> (tempfile::TempDir, Source) {

@@ -30,7 +30,7 @@ fn releases() -> (
         &["main"],
         "amd64",
         path,
-        &["1BAC2C94BE8028EF099FD21F20B0D0ABB7CF4AFC"],
+        &["F54741F2B0E1F1B32F7EE55EC9079FF55FECB8D2"],
     )
     .unwrap();
     let stanza = format!(
@@ -80,10 +80,11 @@ fn rejects_equivocation_rollback_and_backwards_clock() {
     let first = UNIX_EPOCH + Duration::from_secs(1_793_621_400);
     let later = UNIX_EPOCH + Duration::from_secs(1_793_710_800);
     journal.record_at(&old, first, FailurePoint::None).unwrap();
-    assert!(matches!(
-        journal.record_at(&equal_date_other, first, FailurePoint::None),
-        Err(CacheError::Equivocation)
-    ));
+    let result = journal.record_at(&equal_date_other, first, FailurePoint::None);
+    assert!(
+        matches!(result, Err(CacheError::Equivocation)),
+        "{result:?}"
+    );
     journal
         .record_at(&newer, later, FailurePoint::None)
         .unwrap();
@@ -155,6 +156,69 @@ fn rejects_corrupt_state_and_concurrent_writer() {
 }
 
 #[test]
+#[ignore = "subprocess helper for cross-process lock test"]
+fn child_holds_source_lock() {
+    use rustix::fs::{FlockOperation, flock};
+    use std::io::{BufRead, Write};
+    let path = std::env::var_os("DICH_TEST_LOCK_PATH").unwrap();
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    flock(&file, FlockOperation::NonBlockingLockExclusive).unwrap();
+    println!("DICH_LOCK_READY");
+    std::io::stdout().flush().unwrap();
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line).unwrap();
+}
+
+#[test]
+fn source_lock_excludes_a_second_process() {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        process::{Command, Stdio},
+    };
+    let (dir, release, _, _) = releases();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_621_400);
+    journal
+        .record_at(&release, now, FailurePoint::None)
+        .unwrap();
+    let name = source_key(release.source()).unwrap();
+    let mut child = Command::new(std::env::args_os().next().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "cache_tests::child_holds_source_lock",
+            "--nocapture",
+        ])
+        .env(
+            "DICH_TEST_LOCK_PATH",
+            dir.path().join(format!("{name}.lock")),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    loop {
+        line.clear();
+        assert_ne!(output.read_line(&mut line).unwrap(), 0);
+        if line.contains("DICH_LOCK_READY") {
+            break;
+        }
+    }
+    assert!(matches!(
+        journal.record_at(&release, now, FailurePoint::None),
+        Err(CacheError::Busy)
+    ));
+    child.stdin.take().unwrap().write_all(b"release\n").unwrap();
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
 fn rejects_symlinked_or_writable_cache_directories() {
     use std::os::unix::fs::{PermissionsExt, symlink};
     let (dir, _, _, _) = releases();
@@ -213,4 +277,397 @@ fn trust_rotation_and_component_narrowing_do_not_reset_floor_identity() {
         source_key(release.source()).unwrap(),
         source_key(&source).unwrap()
     );
+}
+
+fn artifact_fixture() -> (
+    tempfile::TempDir,
+    crate::AuthorizedArtifact,
+    crate::VerifiedArtifact,
+) {
+    use crate::artifact::verify_artifact_stream_with_clock;
+    use crate::{IndexFormat, authorize_artifact, select_indexed_artifact, verify_packages_index};
+    let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+    let key = dir.path().join("key.gpg");
+    fs::write(&key, include_bytes!("../tests/fixtures/index/keyring.gpg")).unwrap();
+    let path = key.to_str().unwrap();
+    let policy = SourcePolicy::new(
+        Distribution::Debian,
+        "https://example.org/debian",
+        "bookworm",
+        &["main"],
+        "amd64",
+        path,
+        &["9DDAB0BA30893BBE88A2E583BBBAC55DCA1F9AA8"],
+    )
+    .unwrap();
+    let stanza = format!(
+        "Types: deb\nURIs: https://example.org/debian\nSuites: bookworm\nComponents: main\nSigned-By: {path}\n"
+    );
+    let source = import_sources(&stanza, &policy).unwrap().remove(0);
+    let release =
+        verify_configured_inrelease(&source, include_bytes!("../tests/fixtures/index/InRelease"))
+            .unwrap();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    let fresh = validate_release(
+        &release,
+        now,
+        FreshnessPolicy::new(Duration::from_secs(2 * 86400), Duration::ZERO, true).unwrap(),
+    )
+    .unwrap();
+    let index = verify_packages_index(
+        &release,
+        "main",
+        IndexFormat::Gzip,
+        include_bytes!("../tests/fixtures/index/Packages.gz"),
+    )
+    .unwrap();
+    let metadata = select_indexed_artifact(&index, "fixture", "1.0-1").unwrap();
+    let authorized = authorize_artifact(&fresh, &metadata, now).unwrap();
+    let verified = verify_artifact_stream_with_clock(
+        &authorized,
+        include_bytes!("../tests/fixtures/index/fixture.deb").as_slice(),
+        1024,
+        || now,
+    )
+    .unwrap();
+    (dir, authorized, verified)
+}
+
+#[test]
+fn caches_verified_artifact_and_rechecks_integrity_on_read() {
+    use std::io::Read;
+    let (dir, authorized, verified) = artifact_fixture();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    journal
+        .store_artifact_at(&authorized, verified, now, FailurePoint::None)
+        .unwrap();
+    let mut result = journal.load_artifact_at(&authorized, now).unwrap();
+    let mut bytes = Vec::new();
+    result.read_to_end(&mut bytes).unwrap();
+    assert_eq!(bytes, include_bytes!("../tests/fixtures/index/fixture.deb"));
+    let name = format!(
+        "blob-{}",
+        authorized
+            .artifact()
+            .sha256()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+    let path = dir.path().join(name);
+    let mut corrupted = fs::read(&path).unwrap();
+    corrupted[0] ^= 1;
+    fs::write(path, corrupted).unwrap();
+    assert!(journal.load_artifact_at(&authorized, now).is_err());
+}
+
+#[test]
+fn cached_artifact_rejects_keyring_replacement() {
+    let (dir, authorized, verified) = artifact_fixture();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    journal
+        .store_artifact_at(&authorized, verified, now, FailurePoint::None)
+        .unwrap();
+    fs::write(
+        authorized.release().source().keyring(),
+        include_bytes!("../tests/fixtures/fixture-keyring.gpg"),
+    )
+    .unwrap();
+    assert!(matches!(
+        journal.load_artifact_at(&authorized, now),
+        Err(CacheError::Authentication)
+    ));
+}
+
+#[test]
+fn artifact_publication_failures_never_expose_partial_data() {
+    let (dir, authorized, verified) = artifact_fixture();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    assert!(
+        journal
+            .store_artifact_at(
+                &authorized,
+                verified,
+                now,
+                FailurePoint::ArtifactBeforeRename
+            )
+            .is_err()
+    );
+    assert!(journal.load_artifact_at(&authorized, now).is_err());
+    let verified = crate::artifact::verify_artifact_stream_with_clock(
+        &authorized,
+        include_bytes!("../tests/fixtures/index/fixture.deb").as_slice(),
+        1024,
+        || now,
+    )
+    .unwrap();
+    assert!(
+        journal
+            .store_artifact_at(
+                &authorized,
+                verified,
+                now,
+                FailurePoint::ArtifactAfterRename
+            )
+            .is_err()
+    );
+    assert!(journal.load_artifact_at(&authorized, now).is_ok());
+}
+
+#[test]
+fn cached_release_is_reverified_and_expiry_is_enforced() {
+    let (dir, release, _, _) = releases();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_621_400);
+    let policy = FreshnessPolicy::new(
+        Duration::from_secs(3 * 86400),
+        Duration::from_secs(86400),
+        true,
+    )
+    .unwrap();
+    journal
+        .store_release_at(&release, now, FailurePoint::None)
+        .unwrap();
+    assert!(
+        journal
+            .load_release_at(release.source(), policy, now)
+            .is_ok()
+    );
+    assert!(
+        journal
+            .load_release_at(
+                release.source(),
+                policy,
+                now + Duration::from_secs(3 * 86400)
+            )
+            .is_err()
+    );
+    let name = crate::cache::release_name(release.source(), release.release().contents()).unwrap();
+    let path = dir.path().join(name);
+    let mut bytes = fs::read(&path).unwrap();
+    let pos = bytes.windows(6).position(|w| w == b"Debian").unwrap();
+    bytes[pos] ^= 1;
+    fs::write(path, bytes).unwrap();
+    assert!(
+        journal
+            .load_release_at(release.source(), policy, now)
+            .is_err()
+    );
+}
+
+#[test]
+fn caches_and_reauthenticates_detached_release_signature() {
+    let (dir, release, _, _) = releases();
+    let source = release.source();
+    let signed = crate::verify_configured_detached_release(
+        source,
+        include_bytes!("../tests/fixtures/freshness/valid.Release"),
+        include_bytes!("../tests/fixtures/freshness/valid.Release.gpg"),
+    )
+    .unwrap();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_621_400);
+    let policy = FreshnessPolicy::new(
+        Duration::from_secs(3 * 86400),
+        Duration::from_secs(86400),
+        true,
+    )
+    .unwrap();
+    let validated = validate_release(&signed, now, policy).unwrap();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    journal
+        .store_release_at(&validated, now, FailurePoint::None)
+        .unwrap();
+    let loaded = journal.load_release_at(source, policy, now).unwrap();
+    assert_eq!(loaded.release().contents(), signed.contents());
+}
+
+#[test]
+fn release_cache_failure_injection_never_returns_unsigned_or_partial_metadata() {
+    let (dir, release, _, _) = releases();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_621_400);
+    let policy = FreshnessPolicy::new(
+        Duration::from_secs(3 * 86400),
+        Duration::from_secs(86400),
+        true,
+    )
+    .unwrap();
+    assert!(
+        journal
+            .store_release_at(&release, now, FailurePoint::ReleaseBeforeRename)
+            .is_err()
+    );
+    assert!(
+        journal
+            .load_release_at(release.source(), policy, now)
+            .is_err()
+    );
+    assert!(
+        journal
+            .store_release_at(&release, now, FailurePoint::ReleaseAfterRename)
+            .is_err()
+    );
+    journal
+        .load_release_at(release.source(), policy, now)
+        .unwrap();
+}
+
+#[test]
+fn caches_index_only_after_release_reverification_and_rechecks_hash_on_read() {
+    use crate::{IndexFormat, IndexLimits};
+    let (dir, authorized, _) = artifact_fixture();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    let policy =
+        FreshnessPolicy::new(Duration::from_secs(2 * 86400), Duration::ZERO, true).unwrap();
+    journal
+        .store_release_at(authorized.release(), now, FailurePoint::None)
+        .unwrap();
+    journal
+        .store_index_at(
+            authorized.release(),
+            "main",
+            IndexFormat::Gzip,
+            include_bytes!("../tests/fixtures/index/Packages.gz"),
+            IndexLimits::default(),
+            now,
+            FailurePoint::None,
+        )
+        .unwrap();
+    let (release, index) = journal
+        .load_index_at(
+            authorized.release().source(),
+            policy,
+            "main",
+            IndexFormat::Gzip,
+            IndexLimits::default(),
+            now,
+        )
+        .unwrap();
+    let artifact = crate::select_indexed_artifact(&index, "fixture", "1.0-1").unwrap();
+    assert!(crate::authorize_artifact(&release, &artifact, now).is_ok());
+    let name = crate::cache::index_name(
+        authorized.release().source(),
+        authorized.release().release().contents(),
+        "main",
+        IndexFormat::Gzip,
+    )
+    .unwrap();
+    let path = dir.path().join(name);
+    let mut bytes = fs::read(&path).unwrap();
+    bytes[10] ^= 1;
+    fs::write(path, bytes).unwrap();
+    assert!(
+        journal
+            .load_index_at(
+                authorized.release().source(),
+                policy,
+                "main",
+                IndexFormat::Gzip,
+                IndexLimits::default(),
+                now
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn index_publication_failure_never_exposes_partial_data() {
+    use crate::{IndexFormat, IndexLimits};
+    let (dir, authorized, _) = artifact_fixture();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    let policy =
+        FreshnessPolicy::new(Duration::from_secs(2 * 86400), Duration::ZERO, true).unwrap();
+    let input = include_bytes!("../tests/fixtures/index/Packages.gz");
+    journal
+        .store_release_at(authorized.release(), now, FailurePoint::None)
+        .unwrap();
+    assert!(
+        journal
+            .store_index_at(
+                authorized.release(),
+                "main",
+                IndexFormat::Gzip,
+                input,
+                IndexLimits::default(),
+                now,
+                FailurePoint::IndexBeforeRename
+            )
+            .is_err()
+    );
+    assert!(
+        journal
+            .load_index_at(
+                authorized.release().source(),
+                policy,
+                "main",
+                IndexFormat::Gzip,
+                IndexLimits::default(),
+                now
+            )
+            .is_err()
+    );
+    assert!(
+        journal
+            .store_index_at(
+                authorized.release(),
+                "main",
+                IndexFormat::Gzip,
+                input,
+                IndexLimits::default(),
+                now,
+                FailurePoint::IndexAfterRename
+            )
+            .is_err()
+    );
+    assert!(
+        journal
+            .load_index_at(
+                authorized.release().source(),
+                policy,
+                "main",
+                IndexFormat::Gzip,
+                IndexLimits::default(),
+                now
+            )
+            .is_ok()
+    );
+}
+
+#[test]
+fn fetch_rejects_equivocated_snapshot_before_any_network_request() {
+    use crate::transport::{FetchError, NetworkResponse, Transport};
+    struct Deny {
+        calls: usize,
+    }
+    impl Transport for Deny {
+        fn request(&mut self, _: &url::Url, _: Duration) -> Result<NetworkResponse, FetchError> {
+            self.calls += 1;
+            Err(FetchError::Transport)
+        }
+    }
+    let (dir, authorized, _) = artifact_fixture();
+    let now = UNIX_EPOCH + Duration::from_secs(1_793_707_200);
+    let policy =
+        FreshnessPolicy::new(Duration::from_secs(2 * 86400), Duration::ZERO, true).unwrap();
+    let alternate = verify_configured_inrelease(
+        authorized.release().source(),
+        include_bytes!("../tests/fixtures/index/Alternate.InRelease"),
+    )
+    .unwrap();
+    let alternate = validate_release(&alternate, now, policy).unwrap();
+    let journal = SnapshotJournal::open(dir.path()).unwrap();
+    journal
+        .record_at(&alternate, now, FailurePoint::None)
+        .unwrap();
+    let mut transport = Deny { calls: 0 };
+    assert!(matches!(
+        journal.fetch_with_transport(&authorized, 1024, &mut transport, || now),
+        Err(CacheError::Equivocation)
+    ));
+    assert_eq!(transport.calls, 0);
 }

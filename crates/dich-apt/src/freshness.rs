@@ -57,6 +57,7 @@ pub struct ValidatedRelease {
     validated_at: SystemTime,
     expires_at: SystemTime,
     signed_at: u64,
+    policy: FreshnessPolicy,
 }
 impl ValidatedRelease {
     pub(crate) fn release(&self) -> &VerifiedRelease {
@@ -64,6 +65,9 @@ impl ValidatedRelease {
     }
     pub(crate) fn signed_at(&self) -> u64 {
         self.signed_at
+    }
+    pub(crate) fn policy(&self) -> FreshnessPolicy {
+        self.policy
     }
     pub fn source(&self) -> &crate::Source {
         self.release.source()
@@ -132,6 +136,7 @@ pub fn validate_release(
         validated_at: now,
         expires_at,
         signed_at: date,
+        policy,
     })
 }
 

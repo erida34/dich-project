@@ -9,7 +9,7 @@ pub use cache::{CacheError, SnapshotJournal, SnapshotPin};
 mod config;
 pub use artifact::{
     ArtifactError, AuthorizedArtifact, IndexedArtifact, VerifiedArtifact, authorize_artifact,
-    select_indexed_artifact, verify_artifact_stream,
+    select_indexed_artifact,
 };
 mod control;
 mod dependencies;
@@ -29,7 +29,7 @@ pub use keyring::read_configured_keyring;
 mod freshness;
 mod sources;
 mod transport;
-pub use transport::{FetchError, fetch_artifact};
+pub use transport::FetchError;
 mod version;
 pub use config::{ConfiguredSource, parse_source_config, read_source_config};
 pub use freshness::{FreshnessError, FreshnessPolicy, ValidatedRelease, validate_release};

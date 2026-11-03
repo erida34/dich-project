@@ -28,22 +28,18 @@ impl fmt::Display for FetchError {
 }
 impl Error for FetchError {}
 
-/// Download over HTTPS, following only redirects within the configured repository base.
-/// TLS verification is mandatory. A trusted clock and explicit download limit are required.
-pub fn fetch_artifact(
-    authorized: &AuthorizedArtifact,
-    max_bytes: u64,
-) -> Result<VerifiedArtifact, FetchError> {
-    let agent = ureq::AgentBuilder::new()
-        .https_only(true)
-        .redirects(0)
-        .try_proxy_from_env(false)
-        .timeout_connect(Duration::from_secs(15))
-        .timeout_read(Duration::from_secs(30))
-        .timeout_write(Duration::from_secs(30))
-        .build();
-    let mut transport = HttpsTransport { agent };
-    fetch_with_transport(authorized, max_bytes, &mut transport, SystemTime::now)
+impl HttpsTransport {
+    pub(crate) fn new() -> Self {
+        let agent = ureq::AgentBuilder::new()
+            .https_only(true)
+            .redirects(0)
+            .try_proxy_from_env(false)
+            .timeout_connect(Duration::from_secs(15))
+            .timeout_read(Duration::from_secs(30))
+            .timeout_write(Duration::from_secs(30))
+            .build();
+        Self { agent }
+    }
 }
 
 pub(crate) struct NetworkResponse {

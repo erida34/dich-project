@@ -13,6 +13,9 @@ pub struct IndexLimits {
     expanded: usize,
 }
 impl IndexLimits {
+    pub(crate) fn compressed_limit(&self) -> usize {
+        self.compressed
+    }
     pub fn new(compressed: usize, expanded: usize) -> Result<Self, IndexError> {
         if compressed == 0
             || compressed > MAX_COMPRESSED
