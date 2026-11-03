@@ -233,6 +233,8 @@ name = "dich-deb"
 version = "0.1.0"
 dependencies = [
  "ar",
+ "dich-apt",
+ "rustix",
  "tar",
  "tempfile",
 ]

@@ -1,5 +1,10 @@
 #![forbid(unsafe_code)]
 //! Bounded read-only Debian archive inspection. No extraction or installation.
+#[cfg(target_os = "linux")]
+mod staging;
+#[cfg(target_os = "linux")]
+pub use staging::{StageError, StagedArchive, stage_cached};
+
 use std::{
     error::Error,
     fmt,
@@ -431,4 +436,147 @@ fn decompress(format: Compression, bytes: &[u8], limit: usize) -> Result<Vec<u8>
         return Err(DebError::Limit);
     }
     Ok(expanded)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod staging_tests {
+    use super::*;
+    use std::io::Cursor;
+    fn sample(path: &str, data: &[u8]) -> Vec<u8> {
+        let mut control = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut control);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(1);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "control", &b"x"[..])
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        let mut payload = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut payload);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, path, data).unwrap();
+            builder.finish().unwrap();
+        }
+        let mut output = Vec::new();
+        {
+            let mut builder = ar::Builder::new(&mut output);
+            for (name, content) in [
+                ("debian-binary", b"2.0\n".as_slice()),
+                ("control.tar", control.as_slice()),
+                ("data.tar", payload.as_slice()),
+            ] {
+                let header = ar::Header::new(name.as_bytes().to_vec(), content.len() as u64);
+                builder.append(&header, Cursor::new(content)).unwrap();
+            }
+        }
+        output
+    }
+    #[test]
+    fn stages_file_in_private_directory_without_preserving_archive_modes() {
+        let bytes = sample("usr/share/example", b"data");
+        let stage = crate::staging::stage_untrusted_for_test(&bytes, Limits::default()).unwrap();
+        use std::io::Read;
+        let mut file = stage.open_file("usr/share/example").unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"data");
+        assert!(stage.open_file("../etc/passwd").is_err());
+        assert!(stage.open_file("/etc/passwd").is_err());
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    #[test]
+    fn staging_refuses_an_injected_symlink_and_leaves_target_untouched() {
+        use std::os::unix::fs::symlink;
+        let outside = tempfile::tempdir().unwrap();
+        let bytes = sample("usr/share/example", b"attack");
+        let result = crate::staging::stage_with_test_hook(&bytes, Limits::default(), |stage| {
+            symlink(outside.path(), stage.join("usr")).unwrap();
+        });
+        assert!(result.is_err());
+        assert!(!outside.path().join("share").exists());
+    }
+    #[test]
+    fn staging_refuses_root_directory_replacement() {
+        use std::os::unix::fs::symlink;
+        let outside = tempfile::tempdir().unwrap();
+        let bytes = sample("usr/share/example", b"attack");
+        let mut replaced_path = None;
+        let result = crate::staging::stage_with_test_hook(&bytes, Limits::default(), |stage| {
+            replaced_path = Some(stage.to_path_buf());
+            std::fs::rename(stage, outside.path().join("moved")).unwrap();
+            symlink(outside.path(), stage).unwrap();
+        });
+        assert!(result.is_err());
+        assert!(!outside.path().join("usr").exists());
+        assert!(!outside.path().join("moved/usr").exists());
+        match std::fs::remove_file(replaced_path.unwrap()) {
+            Ok(()) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => panic!("could not remove test symlink: {error}"),
+        }
+    }
+    #[test]
+    fn staging_refuses_existing_file_without_overwrite() {
+        let bytes = sample("usr/share/example", b"attack");
+        let result = crate::staging::stage_with_test_hook(&bytes, Limits::default(), |stage| {
+            std::fs::create_dir_all(stage.join("usr/share")).unwrap();
+            std::fs::write(stage.join("usr/share/example"), b"existing").unwrap();
+        });
+        assert!(result.is_err());
+    }
+    #[test]
+    fn concurrent_symlink_swaps_never_write_into_external_target() {
+        use std::{
+            os::unix::fs::symlink,
+            sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            },
+        };
+        for _ in 0..10 {
+            let outside = tempfile::tempdir().unwrap();
+            let bytes = sample("usr/share/example", b"attack");
+            let running = Arc::new(AtomicBool::new(true));
+            let mut thread = None;
+            let _result =
+                crate::staging::stage_with_test_hook(&bytes, Limits::default(), |stage| {
+                    let path = stage.join("usr");
+                    let target = outside.path().to_owned();
+                    let running = running.clone();
+                    thread = Some(std::thread::spawn(move || {
+                        while running.load(Ordering::Relaxed) {
+                            let _ = std::fs::remove_file(&path);
+                            let _ = std::fs::create_dir(&path);
+                            let _ = std::fs::remove_dir(&path);
+                            let _ = symlink(&target, &path);
+                        }
+                    }));
+                });
+            running.store(false, Ordering::Relaxed);
+            thread.unwrap().join().unwrap();
+            assert!(!outside.path().join("share/example").exists());
+        }
+    }
+    #[test]
+    fn staged_hardlink_collision_does_not_change_external_file() {
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("protected");
+        std::fs::write(&target, b"original").unwrap();
+        let bytes = sample("usr/share/example", b"attack");
+        let result = crate::staging::stage_with_test_hook(&bytes, Limits::default(), |stage| {
+            std::fs::create_dir_all(stage.join("usr/share")).unwrap();
+            std::fs::hard_link(&target, stage.join("usr/share/example")).unwrap();
+        });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(target).unwrap(), b"original");
+    }
 }

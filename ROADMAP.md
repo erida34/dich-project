@@ -30,7 +30,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 
 ## Phase 3 — safe artifact handling and immutable store (v0.4.x)
 - [x] Read `.deb` ar envelope, control/data tar streams, limits for entries/expanded bytes/files/nesting/path lengths (bounded read-only subset; no extraction).
-- [ ] Safe extraction that prevents `..`, absolute paths, symlink/hardlink escapes, devices, FIFOs, setuid/setgid, xattrs/capabilities unless explicitly approved.
+- [x] Safe extraction that prevents `..`, absolute paths, symlink/hardlink escapes, devices, FIFOs, setuid/setgid, xattrs/capabilities unless explicitly approved (private Linux staging subset; links/extensions rejected).
 - [ ] Treat package scripts as metadata only; never execute in host root context.
 - [ ] Adopt canonical store identity hashing verified content plus source/build context and policy version; collision handling and dedup semantics.
 - [ ] Crash-safe staging, fsync, atomic rename, permissions, SQLite metadata (WAL with durability policy), ownership and locking.

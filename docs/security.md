@@ -52,4 +52,6 @@ Downgrade regression tests use a caller-supplied fixture baseline and Debian ver
 
 Experimental `.deb` inspection reads bounded common-ar/control/data tar streams, including gzip/xz/zstd through resource-limited helpers (ADR 0014); it performs no extraction, does not establish safe paths or links, and is not yet connected to trusted artifact fetch. It rejects extended records and non-regular/non-directory tar types. Other compression formats, links, special files and tar extensions remain unsupported; safe extraction is not implemented.
 
-Read-only `.deb` inspection additionally rejects absolute and parent paths, normalized duplicates, file/directory collisions, dangerous mode bits and link/special/extension records. These checks do not establish safe filesystem extraction; no extractor exists yet.
+Read-only `.deb` inspection additionally rejects absolute and parent paths, normalized duplicates, file/directory collisions, dangerous mode bits and link/special/extension records. A Linux-only private staging API now uses these checks and no-follow, beneath-root openat2 operations for verified cached artifacts; it does not publish files or authorize installation.
+
+Staging rejects all archive links and extension records rather than preserving them, writes files as 0600, and does not preserve ownership or xattrs. Its private temporary tree is neither immutable nor crash-durable; same-UID mutation, cleanup after crashes and future publication need separate defenses. It fails closed if openat2 or a safe root-owned `/tmp` is unavailable.
