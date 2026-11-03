@@ -38,7 +38,7 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] `dich fetch`, `dich inspect`, `dich store verify`, `dich store ls` with negative tests for hostile archives and concurrent operations (experimental, Linux-only; live signed Ubuntu fetch verified through explicit HTTP CONNECT proxy; no activation or installability claim).
 
 ## Phase 4 — compatibility analyzer and opt-in relocation (v0.5.x)
-- [ ] Identify ELF objects, interpreter, SONAME, NEEDED, RPATH/RUNPATH, dlopen risks, dynamic loader interactions, symbol versions and libc constraints.
+- [x] Identify ELF objects, interpreter, SONAME, NEEDED, RPATH/RUNPATH, dlopen risks, dynamic loader interactions, symbol versions and libc constraints (bounded byte-level evidence API only; no `.deb` traversal or compatibility approval yet; ADR 0022).
 - [ ] Scan absolute embedded paths, script shebangs, pkg-config/CMake paths, config files, maintainer triggers, service integration, NSS/locale requirements.
 - [ ] Produce machine-readable compatibility report with `supported`, `unsupported`, `review_required` and evidence.
 - [ ] Initial allowlisted relocatable *library-only* package subset and fixture-based policy; all others fail closed.

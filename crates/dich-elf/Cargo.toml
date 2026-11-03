@@ -4,3 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+
+
+[dependencies]
+goblin = { version = "=0.9.3", default-features = false, features = ["elf32", "elf64", "endian_fd"] }
