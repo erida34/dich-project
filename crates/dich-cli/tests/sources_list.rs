@@ -322,6 +322,50 @@ fn cached_query_cli_outputs_authenticated_fixture_offline() {
         let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
         assert_eq!(error["error"]["code"], "fetch_failed");
     }
+    let index_path = fs::read_dir(&cache_dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("index-")
+        })
+        .unwrap();
+    let saved = fs::read(&index_path).unwrap();
+    for tamper in ["index", "keyring"] {
+        if tamper == "index" {
+            fs::write(&index_path, b"corrupt").unwrap();
+        } else {
+            fs::write(&index_path, &saved).unwrap();
+            fs::write(&keyring, b"forged keyring").unwrap();
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_dich"))
+            .args([
+                "--json",
+                "--config",
+                config.to_str().unwrap(),
+                "--cache",
+                cache_dir.to_str().unwrap(),
+                "--max-age-seconds",
+                "86400",
+                "--allow-missing-valid-until",
+                "fetch",
+                "fixture",
+                "--exact-version",
+                "1.0-1",
+                "--component",
+                "main",
+                "--max-bytes",
+                "1024",
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{tamper}");
+        assert!(output.stdout.is_empty());
+        let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["error"]["code"], "fetch_failed");
+    }
 }
 
 #[test]
