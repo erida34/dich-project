@@ -647,7 +647,13 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                             trace: Vec::new(),
                         })?;
                         if cli.json {
-                            let objects: Vec<_> = records.iter().map(|r| serde_json::json!({"id":r.id,"kind":match r.kind { dich_store::ObjectKind::Archive => "archive", dich_store::ObjectKind::Tree => "tree" }, "stored_bytes":r.stored_bytes})).collect();
+                            let objects: Vec<_> = records.iter().map(|r| {
+                                let (kind, lifecycle) = match r.kind {
+                                    dich_store::ObjectKind::Archive => ("archive", "downloaded"),
+                                    dich_store::ObjectKind::Tree => ("tree", "extracted"),
+                                };
+                                serde_json::json!({"id":r.id,"kind":kind,"stored_bytes":r.stored_bytes,"recorded_lifecycle":lifecycle,"content_verified":false,"compatibility":"not_analyzed","installable":false})
+                            }).collect();
                             println!(
                                 "{}",
                                 serde_json::json!({"schema_version":1,"status":"completed","scope":"metadata_only","objects":objects})
@@ -656,26 +662,35 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                             println!("completed: metadata only; object contents not verified");
                             for r in records {
                                 println!(
-                                    "{}\t{}\t{}",
+                                    "{}\t{}\t{}\t{}",
                                     r.id,
                                     match r.kind {
                                         dich_store::ObjectKind::Archive => "archive",
                                         dich_store::ObjectKind::Tree => "tree",
                                     },
-                                    r.stored_bytes
+                                    r.stored_bytes,
+                                    match r.kind {
+                                        dich_store::ObjectKind::Archive =>
+                                            "recorded downloaded; not analyzed",
+                                        dich_store::ObjectKind::Tree =>
+                                            "recorded extracted; not analyzed",
+                                    }
                                 );
                             }
                         }
                     }
                     StoreCommands::Verify { id, kind } => {
-                        let (kind_name, bytes) = match kind {
+                        let (kind_name, lifecycle, bytes) = match kind {
                             StoreKind::Archive => (
                                 "archive",
+                                "downloaded",
                                 db.verify_archive_object(&id).map(|r| r.total_bytes),
                             ),
-                            StoreKind::Tree => {
-                                ("tree", db.verify_tree_object(&id).map(|r| r.total_bytes))
-                            }
+                            StoreKind::Tree => (
+                                "tree",
+                                "extracted",
+                                db.verify_tree_object(&id).map(|r| r.total_bytes),
+                            ),
                         };
                         let bytes = bytes.map_err(|_| CliError {
                             code: "store_verify_failed",
@@ -685,7 +700,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         if cli.json {
                             println!(
                                 "{}",
-                                serde_json::json!({"schema_version":1,"status":"completed","scope":"local_metadata_only","id":id,"kind":kind_name,"stored_bytes":bytes})
+                                serde_json::json!({"schema_version":1,"status":"completed","scope":"local_metadata_only","id":id,"kind":kind_name,"stored_bytes":bytes,"recorded_lifecycle":lifecycle,"content_verified":true,"compatibility":"not_analyzed","installable":false})
                             );
                         } else {
                             println!(

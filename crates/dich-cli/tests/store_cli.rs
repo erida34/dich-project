@@ -84,6 +84,10 @@ fn store_list_and_verify_distinguish_metadata_from_local_integrity() {
     let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["objects"][0]["id"], id);
     assert_eq!(body["scope"], "metadata_only");
+    assert_eq!(body["objects"][0]["recorded_lifecycle"], "downloaded");
+    assert_eq!(body["objects"][0]["content_verified"], false);
+    assert_eq!(body["objects"][0]["compatibility"], "not_analyzed");
+    assert_eq!(body["objects"][0]["installable"], false);
     let out = run(&[
         "--json",
         "--store-dir",
@@ -101,6 +105,10 @@ fn store_list_and_verify_distinguish_metadata_from_local_integrity() {
     );
     let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["scope"], "local_metadata_only");
+    assert_eq!(body["recorded_lifecycle"], "downloaded");
+    assert_eq!(body["content_verified"], true);
+    assert_eq!(body["compatibility"], "not_analyzed");
+    assert_eq!(body["installable"], false);
     let file = root.path().join("objects").join(format!("{id}.deb"));
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
     fs::write(&file, b"tampered fixture").unwrap();

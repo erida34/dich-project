@@ -231,6 +231,11 @@ fn signed_cached_archive_can_publish_a_tree_without_running_scripts() {
         "{}",
         String::from_utf8_lossy(&verify.stderr)
     );
+    let verified: serde_json::Value = serde_json::from_slice(&verify.stdout).unwrap();
+    assert_eq!(verified["recorded_lifecycle"], "extracted");
+    assert_eq!(verified["content_verified"], true);
+    assert_eq!(verified["compatibility"], "not_analyzed");
+    assert_eq!(verified["installable"], false);
     let reused = fetch();
     assert!(reused.status.success());
     let body: serde_json::Value = serde_json::from_slice(&reused.stdout).unwrap();
