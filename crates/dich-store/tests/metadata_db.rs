@@ -290,3 +290,23 @@ fn missing_database_with_sidecar_is_not_recreated() {
     assert!(!root.path().join("metadata.sqlite3").exists());
     assert_eq!(std::fs::read(wal).unwrap(), b"unexamined");
 }
+
+#[test]
+fn partial_marker_can_only_be_removed_from_empty_uninitialized_store() {
+    let root = private_dir();
+    let marker = root.path().join("metadata.initializing");
+    std::fs::write(&marker, b"dich-").unwrap();
+    std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(MetadataDb::open(root.path()).is_err());
+    std::fs::write(root.path().join("other"), b"keep").unwrap();
+    assert!(MetadataDb::recover_abandoned_marker(root.path()).is_err());
+    std::fs::remove_file(root.path().join("other")).unwrap();
+    MetadataDb::recover_abandoned_marker(root.path()).unwrap();
+    assert_eq!(
+        MetadataDb::open(root.path())
+            .unwrap()
+            .schema_version()
+            .unwrap(),
+        3
+    );
+}

@@ -66,6 +66,48 @@ impl MetadataDb {
         fs::fsync(&root).map_err(|_| MetadataError::Io)?;
         Ok(())
     }
+    /// Explicitly remove a partial initialization marker only when no database or other state exists.
+    pub fn recover_abandoned_marker(path: &Path) -> Result<(), MetadataError> {
+        let root = open_private_directory(path)?;
+        let _lock = acquire_lock(&root)?;
+        let fresh = fs::openat(
+            &root,
+            ".",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| MetadataError::UnsafePath)?;
+        let mut reader = fs::Dir::read_from(&fresh).map_err(|_| MetadataError::Io)?;
+        while let Some(entry) = reader.read() {
+            let entry = entry.map_err(|_| MetadataError::Io)?;
+            if !matches!(
+                entry.file_name().to_bytes(),
+                b"." | b".." | b"metadata.lock" | b"metadata.initializing"
+            ) {
+                return Err(MetadataError::UnknownSchema);
+            }
+        }
+        let fd = fs::openat(
+            &root,
+            "metadata.initializing",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(|_| MetadataError::UnsafePath)?;
+        check_file(&fd)?;
+        let mut bytes = Vec::new();
+        std::fs::File::from(fd)
+            .take((INIT_MARKER.len() + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| MetadataError::Io)?;
+        if !INIT_MARKER.starts_with(&bytes) {
+            return Err(MetadataError::UnknownSchema);
+        }
+        fs::unlinkat(&root, "metadata.initializing", AtFlags::empty())
+            .map_err(|_| MetadataError::Io)?;
+        fs::fsync(&root).map_err(|_| MetadataError::Io)?;
+        Ok(())
+    }
     pub fn open(path: &Path) -> Result<Self, MetadataError> {
         let root = open_private_directory(path)?;
         let lock = acquire_lock(&root)?;
@@ -340,6 +382,11 @@ fn create_init_marker(root: &OwnedFd) -> Result<(), MetadataError> {
     )
     .map_err(|_| MetadataError::UnsafePath)?;
     let mut marker = std::fs::File::from(fd);
+    #[cfg(test)]
+    if std::env::var("DICH_INIT_CRASH").ok().as_deref() == Some("partial_marker") {
+        marker.write_all(&INIT_MARKER[..5]).unwrap();
+        std::process::exit(88);
+    }
     marker
         .write_all(INIT_MARKER)
         .map_err(|_| MetadataError::Io)?;
@@ -577,5 +624,30 @@ mod tests {
             let db = MetadataDb::open(root.path()).unwrap_or_else(|e| panic!("{point}: {e}"));
             assert_eq!(db.schema_version().unwrap(), 3);
         }
+    }
+    #[test]
+    fn partial_marker_process_exit_has_narrow_explicit_recovery() {
+        let root = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "metadata::tests::initialization_crash_child",
+            ])
+            .env("DICH_INIT_ROOT", root.path())
+            .env("DICH_INIT_CRASH", "partial_marker")
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(88));
+        assert!(MetadataDb::open(root.path()).is_err());
+        MetadataDb::recover_abandoned_marker(root.path()).unwrap();
+        assert_eq!(
+            MetadataDb::open(root.path())
+                .unwrap()
+                .schema_version()
+                .unwrap(),
+            3
+        );
     }
 }
