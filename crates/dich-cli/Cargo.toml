@@ -42,6 +42,7 @@ name = "dich"
 maintainer = "Dich Maintainers"
 section = "admin"
 priority = "optional"
+depends = "$auto, gpgv, util-linux, gzip, xz-utils, zstd"
 extended-description = "Experimental Rust CLI scaffold for a planned versioned package store using verified Debian/Ubuntu APT repositories. Package installation is not implemented in this version."
 assets = [
   ["target/release/dich", "usr/bin/", "755"],
