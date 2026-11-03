@@ -14,7 +14,8 @@ use std::{
     os::fd::OwnedFd,
 };
 
-const MANIFEST_PREFIX: &[u8] = b"dich.profile.generation\0v1\0";
+const LEGACY_MANIFEST_PREFIX: &[u8] = b"dich.profile.generation\0v1\0";
+const MANIFEST_PREFIX: &[u8] = b"dich.profile.generation\0v2\0";
 const MAX_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +28,7 @@ pub enum ProfileOutcome {
 pub struct ProfileGeneration {
     pub profile: String,
     pub generation_id: String,
+    pub previous_id: Option<String>,
     pub graph_id: String,
     pub graph: ReferenceGraph,
 }
@@ -42,38 +44,32 @@ impl MetadataDb {
     ) -> Result<(ProfileGeneration, ProfileOutcome), PublicationError> {
         validate_profile_name(profile_name)?;
         let graph = self.read_reference_graph(graph_id)?;
-        let manifest = encode_manifest(profile_name, graph_id, graph.canonical())?;
-        let generation_id = hash_hex(&manifest);
-
         let profiles = private_dir(&self.root, "profiles")?;
         let profile = private_dir(&profiles, profile_name)?;
         let generations = private_dir(&profile, "generations")?;
+        let current = read_profile_dir(self, &profile, profile_name)?;
+        if let Some(current) = &current
+            && current.graph_id == graph_id
+        {
+            return Ok((current.clone(), ProfileOutcome::Reused));
+        }
+        let previous_id = current.map(|generation| generation.generation_id);
+        let manifest = encode_manifest(
+            profile_name,
+            graph_id,
+            previous_id.as_deref(),
+            graph.canonical(),
+        )?;
+        let generation_id = hash_hex(&manifest);
         publish_manifest(&generations, &generation_id, &manifest)?;
         fs::fsync(&generations).map_err(|_| PublicationError::Io)?;
-
-        if let Some(current) = read_profile_dir(self, &profile, profile_name)?
-            && current.generation_id == generation_id
-        {
-            return Ok((current, ProfileOutcome::Reused));
-        }
-
-        let target = format!("generations/{generation_id}");
-        let link_name = random_name("current")?;
-        fs::symlinkat(&target, &profile, &link_name).map_err(|_| PublicationError::Io)?;
-        let mut link = TempEntry {
-            dir: &profile,
-            name: Some(link_name.clone()),
-        };
-        fs::fsync(&profile).map_err(|_| PublicationError::Io)?;
-        fs::renameat(&profile, &link_name, &profile, "current")
-            .map_err(|_| PublicationError::Io)?;
-        link.name = None;
-        fs::fsync(&profile).map_err(|_| PublicationError::Io)?;
+        switch_current(&profile, &generation_id)?;
 
         Ok((
             ProfileGeneration {
                 profile: profile_name.to_owned(),
                 generation_id,
+                previous_id,
                 graph_id: graph_id.to_owned(),
                 graph,
             },
@@ -94,6 +90,23 @@ impl MetadataDb {
             return Ok(None);
         };
         read_profile_dir(self, &profile, profile_name)
+    }
+
+    /// Atomically move a profile pointer to the generation recorded as its previous state.
+    pub fn rollback_profile_generation(
+        &mut self,
+        profile_name: &str,
+    ) -> Result<ProfileGeneration, PublicationError> {
+        validate_profile_name(profile_name)?;
+        let profiles = open_private_dir(&self.root, "profiles")?;
+        let profile = open_private_dir(&profiles, profile_name)?;
+        let current =
+            read_profile_dir(self, &profile, profile_name)?.ok_or(PublicationError::Unsupported)?;
+        let previous = current.previous_id.ok_or(PublicationError::Unsupported)?;
+        let generations = open_private_dir(&profile, "generations")?;
+        let generation = read_generation(self, &generations, profile_name, &previous)?;
+        switch_current(&profile, &generation.generation_id)?;
+        Ok(generation)
     }
 
     /// List active profile generations in stable name order. Incomplete profile directories
@@ -144,11 +157,20 @@ fn read_profile_dir(
     validate_digest(generation_id)?;
 
     let generations = open_private_dir(profile, "generations")?;
-    let bytes = read_manifest(&generations, generation_id)?;
+    read_generation(db, &generations, profile_name, generation_id).map(Some)
+}
+
+fn read_generation(
+    db: &MetadataDb,
+    generations: &OwnedFd,
+    profile_name: &str,
+    generation_id: &str,
+) -> Result<ProfileGeneration, PublicationError> {
+    let bytes = read_manifest(generations, generation_id)?;
     if hash_hex(&bytes) != generation_id {
         return Err(PublicationError::Integrity);
     }
-    let (manifest_profile, graph_id, graph_bytes) = decode_manifest(&bytes)?;
+    let (manifest_profile, graph_id, previous_id, graph_bytes) = decode_manifest(&bytes)?;
     if manifest_profile != profile_name {
         return Err(PublicationError::Integrity);
     }
@@ -161,12 +183,28 @@ fn read_profile_dir(
     if recorded != graph {
         return Err(PublicationError::Integrity);
     }
-    Ok(Some(ProfileGeneration {
+    Ok(ProfileGeneration {
         profile: profile_name.to_owned(),
         generation_id: generation_id.to_owned(),
+        previous_id,
         graph_id,
         graph,
-    }))
+    })
+}
+
+fn switch_current(profile: &OwnedFd, generation_id: &str) -> Result<(), PublicationError> {
+    validate_digest(generation_id)?;
+    let target = format!("generations/{generation_id}");
+    let link_name = random_name("current")?;
+    fs::symlinkat(&target, profile, &link_name).map_err(|_| PublicationError::Io)?;
+    let mut link = TempEntry {
+        dir: profile,
+        name: Some(link_name.clone()),
+    };
+    fs::fsync(profile).map_err(|_| PublicationError::Io)?;
+    fs::renameat(profile, &link_name, profile, "current").map_err(|_| PublicationError::Io)?;
+    link.name = None;
+    fs::fsync(profile).map_err(|_| PublicationError::Io)
 }
 
 fn publish_manifest(
@@ -245,6 +283,7 @@ fn read_manifest(generations: &OwnedFd, generation_id: &str) -> Result<Vec<u8>, 
 fn encode_manifest(
     profile_name: &str,
     graph_id: &str,
+    previous_id: Option<&str>,
     graph: &[u8],
 ) -> Result<Vec<u8>, PublicationError> {
     if graph.len() > MAX_MANIFEST_BYTES {
@@ -253,6 +292,7 @@ fn encode_manifest(
     let mut bytes = MANIFEST_PREFIX.to_vec();
     append_field(&mut bytes, profile_name.as_bytes())?;
     append_field(&mut bytes, graph_id.as_bytes())?;
+    append_field(&mut bytes, previous_id.unwrap_or("").as_bytes())?;
     append_field(&mut bytes, graph)?;
     if bytes.len() > MAX_MANIFEST_BYTES {
         return Err(PublicationError::Limit);
@@ -260,15 +300,29 @@ fn encode_manifest(
     Ok(bytes)
 }
 
-fn decode_manifest(bytes: &[u8]) -> Result<(String, String, Vec<u8>), PublicationError> {
-    if bytes.len() > MAX_MANIFEST_BYTES || !bytes.starts_with(MANIFEST_PREFIX) {
+fn decode_manifest(
+    bytes: &[u8],
+) -> Result<(String, String, Option<String>, Vec<u8>), PublicationError> {
+    if bytes.len() > MAX_MANIFEST_BYTES {
         return Err(PublicationError::Integrity);
     }
-    let mut cursor = std::io::Cursor::new(&bytes[MANIFEST_PREFIX.len()..]);
+    let (prefix, has_previous) = if bytes.starts_with(MANIFEST_PREFIX) {
+        (MANIFEST_PREFIX, true)
+    } else if bytes.starts_with(LEGACY_MANIFEST_PREFIX) {
+        (LEGACY_MANIFEST_PREFIX, false)
+    } else {
+        return Err(PublicationError::Integrity);
+    };
+    let mut cursor = std::io::Cursor::new(&bytes[prefix.len()..]);
     let profile = read_field(&mut cursor, 64)?;
     let graph_id = read_field(&mut cursor, 64)?;
+    let previous_id = if has_previous {
+        read_field(&mut cursor, 64)?
+    } else {
+        Vec::new()
+    };
     let graph = read_field_bytes(&mut cursor, MAX_MANIFEST_BYTES)?.to_vec();
-    if cursor.position() as usize != bytes.len() - MANIFEST_PREFIX.len() {
+    if cursor.position() as usize != bytes.len() - prefix.len() {
         return Err(PublicationError::Integrity);
     }
     let profile = std::str::from_utf8(&profile)
@@ -277,11 +331,26 @@ fn decode_manifest(bytes: &[u8]) -> Result<(String, String, Vec<u8>), Publicatio
     validate_profile_name(&profile)?;
     let graph_id = String::from_utf8(graph_id).map_err(|_| PublicationError::Integrity)?;
     validate_digest(&graph_id)?;
-    let canonical = encode_manifest(&profile, &graph_id, &graph)?;
+    let previous_id = String::from_utf8(previous_id).map_err(|_| PublicationError::Integrity)?;
+    let previous_id = if previous_id.is_empty() {
+        None
+    } else {
+        validate_digest(&previous_id)?;
+        Some(previous_id)
+    };
+    let canonical = if has_previous {
+        encode_manifest(&profile, &graph_id, previous_id.as_deref(), &graph)?
+    } else {
+        let mut legacy = LEGACY_MANIFEST_PREFIX.to_vec();
+        append_field(&mut legacy, profile.as_bytes())?;
+        append_field(&mut legacy, graph_id.as_bytes())?;
+        append_field(&mut legacy, &graph)?;
+        legacy
+    };
     if canonical != bytes {
         return Err(PublicationError::Integrity);
     }
-    Ok((profile, graph_id, graph))
+    Ok((profile, graph_id, previous_id, graph))
 }
 
 fn append_field(output: &mut Vec<u8>, value: &[u8]) -> Result<(), PublicationError> {
@@ -400,5 +469,26 @@ impl Drop for TempEntry<'_> {
         if let Some(name) = &self.name {
             let _ = fs::unlinkat(self.dir, name, AtFlags::empty());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_legacy_generation_without_rollback_parent() {
+        let profile = b"default";
+        let graph_id = "a".repeat(64);
+        let graph = b"legacy canonical graph";
+        let mut legacy = LEGACY_MANIFEST_PREFIX.to_vec();
+        append_field(&mut legacy, profile).unwrap();
+        append_field(&mut legacy, graph_id.as_bytes()).unwrap();
+        append_field(&mut legacy, graph).unwrap();
+
+        assert_eq!(
+            decode_manifest(&legacy).unwrap(),
+            ("default".into(), graph_id, None, graph.to_vec())
+        );
     }
 }

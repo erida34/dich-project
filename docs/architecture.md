@@ -41,6 +41,8 @@ Control and Debian version parsers support cached package name/version queries, 
 
 No general relocation strategy is selected. RUNPATH patching, wrappers and host mount namespaces remain deferred. The dependency closure fixture uses glibc `dlmopen` in a fresh link-map namespace, loading each DSO by explicit path and in the reported dependency-first order. This namespace isolates symbol lookup only; it is not a process or privilege sandbox and is limited to the tested x86-64 glibc runtimes (ADRs 0026 and 0027).
 
+Profile manifests preserve the validated graph identity. V2 manifests record their previous generation; v1 remains readable without rollback metadata. `dich profile list` reports current metadata, and `dich rollback` previews the pointer change until `--yes` confirms it. Rollback only selects prior metadata and does not restore or activate package files; package install and remove remain denied. Generations are retained because GC and transaction recovery are not implemented (ADR 0028).
+
 ## Invariants
 - No store object is published prior to full verification.
 - No version is activated without a fully validated dependency closure.

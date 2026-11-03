@@ -1689,8 +1689,16 @@ mod tree_tests {
             .unwrap();
         assert_eq!(outcome, crate::ProfileOutcome::Switched);
         assert_ne!(first.generation_id, second.generation_id);
+        assert_eq!(
+            second.previous_id.as_deref(),
+            Some(first.generation_id.as_str())
+        );
         assert!(manifest.exists(), "prior generation is retained");
         assert_eq!(db.list_profiles().unwrap(), vec![second]);
+        let rolled_back = db.rollback_profile_generation("default").unwrap();
+        assert_eq!(rolled_back, first);
+        assert_eq!(db.list_profiles().unwrap(), vec![first]);
+        assert!(db.rollback_profile_generation("default").is_err());
     }
 
     #[test]

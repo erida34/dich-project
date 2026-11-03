@@ -90,17 +90,20 @@ pub enum Commands {
         #[arg(long, default_value = "default")]
         profile: String,
     },
-    /// Roll back a profile generation (planned)
+    /// Plan or switch a profile to its previous generation
     Rollback {
         #[arg(long, default_value = "default")]
         profile: String,
+        /// Confirm the atomic profile pointer switch
+        #[arg(long)]
+        yes: bool,
     },
     /// Inspect locally recorded store objects
     Store {
         #[command(subcommand)]
         command: StoreCommands,
     },
-    /// Manage profiles (planned)
+    /// List active profile generations
     Profile {
         #[command(subcommand)]
         command: ProfileCommands,
@@ -167,10 +170,7 @@ impl CliError {
 pub fn run(cli: Cli) -> Result<(), CliError> {
     if matches!(
         &cli.command,
-        Commands::Install { .. }
-            | Commands::Remove { .. }
-            | Commands::Rollback { .. }
-            | Commands::Gc { .. }
+        Commands::Install { .. } | Commands::Remove { .. } | Commands::Gc { .. }
     ) {
         dich_core::admission::admit_execution(dich_core::admission::Evidence::Unexamined).map_err(
             |_| CliError {
@@ -716,6 +716,150 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 Err(CliError {
                     code: "unsupported_platform",
                     message: "local archive inspection requires Linux",
+                    trace: Vec::new(),
+                })
+            }
+        }
+        Commands::Profile {
+            command: ProfileCommands::List,
+        } => {
+            #[cfg(target_os = "linux")]
+            {
+                let db = dich_store::MetadataDb::open_existing(&cli.store_dir).map_err(|_| {
+                    CliError {
+                        code: "store_open_failed",
+                        message: "could not open existing protected store with current schema",
+                        trace: Vec::new(),
+                    }
+                })?;
+                let profiles = db.list_profiles().map_err(|_| CliError {
+                    code: "profile_list_failed",
+                    message: "could not validate profile generations",
+                    trace: Vec::new(),
+                })?;
+                if cli.json {
+                    let entries: Vec<_> = profiles
+                        .iter()
+                        .map(|profile| {
+                            serde_json::json!({
+                                "name": profile.profile,
+                                "generation_id": profile.generation_id,
+                                "graph_id": profile.graph_id,
+                                "object_count": profile.graph.nodes().len(),
+                                "dependency_edge_count": profile.graph.edges().len(),
+                            })
+                        })
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::json!({"schema_version":1,"status":"completed","profiles":entries})
+                    );
+                } else if profiles.is_empty() {
+                    println!("completed: no active profiles");
+                } else {
+                    for profile in profiles {
+                        println!(
+                            "{}\t{}\t{} objects",
+                            profile.profile,
+                            profile.generation_id,
+                            profile.graph.nodes().len()
+                        );
+                    }
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                Err(CliError {
+                    code: "unsupported_platform",
+                    message: "profile operations require Linux",
+                    trace: Vec::new(),
+                })
+            }
+        }
+        Commands::Rollback { profile, yes } => {
+            #[cfg(target_os = "linux")]
+            {
+                let mut db =
+                    dich_store::MetadataDb::open_existing(&cli.store_dir).map_err(|_| {
+                        CliError {
+                            code: "store_open_failed",
+                            message: "could not open existing protected store with current schema",
+                            trace: Vec::new(),
+                        }
+                    })?;
+                let current = db
+                    .read_profile_generation(&profile)
+                    .map_err(|_| CliError {
+                        code: "profile_read_failed",
+                        message: "could not validate current profile generation",
+                        trace: Vec::new(),
+                    })?
+                    .ok_or(CliError {
+                        code: "profile_missing",
+                        message: "profile has no active generation",
+                        trace: Vec::new(),
+                    })?;
+                let previous = current.previous_id.clone().ok_or(CliError {
+                    code: "rollback_unavailable",
+                    message: "profile has no previous generation",
+                    trace: Vec::new(),
+                })?;
+                if !yes {
+                    if cli.json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "schema_version":1,
+                                "status":"planned",
+                                "action":"switch_profile_generation",
+                                "profile":profile,
+                                "current_generation":current.generation_id,
+                                "target_generation":previous,
+                                "requires_confirmation":"--yes"
+                            })
+                        );
+                    } else {
+                        println!(
+                            "planned: rollback {profile} from {} to {previous}; rerun with --yes to switch",
+                            current.generation_id
+                        );
+                    }
+                    return Ok(());
+                }
+                let switched = db
+                    .rollback_profile_generation(&profile)
+                    .map_err(|_| CliError {
+                        code: "rollback_failed",
+                        message: "could not atomically switch to the previous profile generation",
+                        trace: Vec::new(),
+                    })?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "schema_version":1,
+                            "status":"completed",
+                            "scope":"profile_metadata_only",
+                            "profile":profile,
+                            "generation_id":switched.generation_id,
+                            "installable":false
+                        })
+                    );
+                } else {
+                    println!(
+                        "completed: profile {profile} now selects generation {} (metadata only)",
+                        switched.generation_id
+                    );
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (profile, yes);
+                Err(CliError {
+                    code: "unsupported_platform",
+                    message: "profile rollback requires Linux",
                     trace: Vec::new(),
                 })
             }

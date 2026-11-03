@@ -718,7 +718,6 @@ fn mutation_commands_fail_closed_without_running_input() {
     for args in [
         vec!["install", payload.as_str()],
         vec!["remove", payload.as_str()],
-        vec!["rollback"],
         vec!["gc", "--execute"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_dich"))
@@ -732,4 +731,38 @@ fn mutation_commands_fail_closed_without_running_input() {
         assert_eq!(body["error"]["code"], "unsupported");
         assert!(!marker.exists());
     }
+    let store_dir = dir.path().join("store");
+    let output = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(["--json", "--store-dir"])
+        .arg(&store_dir)
+        .args(["rollback", "--profile", payload.as_str()])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let body: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(body["error"]["code"], "store_open_failed");
+    assert!(!marker.exists());
+}
+
+#[test]
+fn profile_list_reports_empty_initialized_store() {
+    let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+    let store_dir = dir.path().join("store");
+    fs::create_dir(&store_dir).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&store_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    dich_store::MetadataDb::open(&store_dir).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args(["--json", "--store-dir"])
+        .arg(&store_dir)
+        .args(["profile", "list"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["schema_version"], 1);
+    assert_eq!(body["status"], "completed");
+    assert_eq!(body["profiles"], serde_json::json!([]));
 }
