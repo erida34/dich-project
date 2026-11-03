@@ -173,6 +173,8 @@
 
 - 2026-11-03: First hosted package job confirmed the Ubuntu 22.04 build produces `libc6 (>= 2.34)` and installed/launched Dich in Debian Bookworm. It then failed because the slim image's dpkg policy excludes `/usr/share/doc`, so the required third-party license file was absent. Updated both smoke workflows to opt that license path back in and to list missing installed assets in failures. This is a packaging-test correction; the four-distro matrix has not passed yet.
 
+- 2026-11-03: Hosted CI's first valid-action run completed the four-distro package install/reinstall/remove matrix successfully. Rust tests exposed an executable-mode defect: two checked-in ELF test harnesses were tracked as mode 100644 but invoked directly; WSL DrvFS masked this because it presents files as executable. Corrected the Git executable bits and pinned the Rust CI runner to Ubuntu 22.04 after the `ubuntu-latest` alias had already moved to 26.04. The Rust suite must rerun before its gate is considered green.
+
 
 
 
