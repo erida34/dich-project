@@ -29,6 +29,8 @@ pub use index::{
 mod signatures;
 pub use keyring::read_configured_keyring;
 mod freshness;
+mod resolver_fixture;
+pub use resolver_fixture::{DebianUniverse, Requirement, UniverseError};
 mod resolver_policy;
 mod sources;
 pub use resolver_policy::check_release_policy;

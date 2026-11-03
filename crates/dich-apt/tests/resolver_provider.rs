@@ -1,0 +1,75 @@
+use dich_apt::{DebianUniverse, parse_control_stanzas};
+use dich_core::resolver::{SearchLimits, resolve};
+
+#[test]
+fn chooses_highest_satisfying_version_and_backtracks_on_conflicts() {
+    let fixture = b"Package: root\nVersion: 1\nArchitecture: amd64\nDepends: lib (>= 1), extra\n\nPackage: lib\nVersion: 2\nArchitecture: amd64\nConflicts: extra\n\nPackage: lib\nVersion: 1\nArchitecture: amd64\n\nPackage: extra\nVersion: 1\nArchitecture: all\n";
+    let stanzas = parse_control_stanzas(fixture).unwrap();
+    let universe = DebianUniverse::from_stanzas(&stanzas, "amd64").unwrap();
+    let root = universe.require("root").unwrap();
+    let plan = resolve(&universe, vec![root], SearchLimits::default()).unwrap();
+    let selected = plan
+        .selected
+        .iter()
+        .map(|id| universe.label(*id).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(selected, vec!["root=1", "lib=1", "extra=1"]);
+}
+
+#[test]
+fn provides_must_satisfy_the_declared_version_and_package_conflicts() {
+    let fixture = b"Package: root\nVersion: 1\nArchitecture: amd64\nDepends: virtual (>= 2)\n\nPackage: a-provider\nVersion: 99\nArchitecture: amd64\nProvides: virtual (= 1)\n\nPackage: z-provider\nVersion: 1\nArchitecture: amd64\nProvides: virtual (= 2)\n";
+    let universe =
+        DebianUniverse::from_stanzas(&parse_control_stanzas(fixture).unwrap(), "amd64").unwrap();
+    let plan = resolve(
+        &universe,
+        vec![universe.require("root").unwrap()],
+        SearchLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        plan.selected
+            .iter()
+            .map(|id| universe.label(*id).unwrap())
+            .collect::<Vec<_>>(),
+        vec!["root=1", "z-provider=1"]
+    );
+}
+
+#[test]
+fn unsupported_semantics_and_system_packages_are_never_silently_selected() {
+    for field in [
+        "Pre-Depends: libc6",
+        "Depends: lib:any",
+        "Depends: lib [amd64]",
+        "Essential: yes",
+        "Priority: required",
+        "Multi-Arch: same",
+    ] {
+        let input = format!("Package: root\nVersion: 1\nArchitecture: amd64\n{field}\n");
+        let universe = DebianUniverse::from_stanzas(
+            &parse_control_stanzas(input.as_bytes()).unwrap(),
+            "amd64",
+        )
+        .unwrap();
+        assert!(
+            resolve(
+                &universe,
+                vec![universe.require("root").unwrap()],
+                SearchLimits::default()
+            )
+            .is_err(),
+            "accepted {field}"
+        );
+    }
+}
+
+#[test]
+fn invalid_candidate_ids_fail_closed_without_panicking() {
+    use dich_core::resolver::Provider;
+    let universe = DebianUniverse::from_stanzas(&[], "amd64").unwrap();
+    assert!(universe.label(999).is_none());
+    assert!(universe.incompatible(&999, &0));
+    let requirements = universe.requirements(&999);
+    assert!(resolve(&universe, requirements, SearchLimits::default()).is_err());
+}
