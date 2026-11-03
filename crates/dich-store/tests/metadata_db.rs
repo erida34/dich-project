@@ -13,14 +13,14 @@ fn metadata_uses_wal_full_durability_and_reopens() {
     let db = MetadataDb::open(root.path()).unwrap();
     assert_eq!(db.journal_mode().unwrap(), "wal");
     assert_eq!(db.synchronous().unwrap(), 2);
-    assert_eq!(db.schema_version().unwrap(), 3);
+    assert_eq!(db.schema_version().unwrap(), 4);
     drop(db);
     assert_eq!(
         MetadataDb::open(root.path())
             .unwrap()
             .schema_version()
             .unwrap(),
-        3
+        4
     );
 }
 #[test]
@@ -158,7 +158,7 @@ fn upgrades_known_v1_metadata_schema_transactionally() {
     }
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let db = MetadataDb::open(root.path()).unwrap();
-    assert_eq!(db.schema_version().unwrap(), 3);
+    assert_eq!(db.schema_version().unwrap(), 4);
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn explicit_empty_initialization_recovery_is_narrow() {
             .unwrap()
             .schema_version()
             .unwrap(),
-        3
+        4
     );
 }
 #[test]
@@ -235,7 +235,7 @@ fn interrupted_initialization_marker_allows_safe_restart() {
             .unwrap()
             .schema_version()
             .unwrap(),
-        3
+        4
     );
     assert!(!marker.exists());
 }
@@ -307,7 +307,7 @@ fn partial_marker_can_only_be_removed_from_empty_uninitialized_store() {
             .unwrap()
             .schema_version()
             .unwrap(),
-        3
+        4
     );
 }
 

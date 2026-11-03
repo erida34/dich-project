@@ -254,14 +254,14 @@ pub enum OrphanKind {
     Tree,
 }
 impl MetadataDb {
-    /// Remove one unreferenced object. The lock protects the metadata check and removal.
+    /// Remove one unreferenced object. The lock protects the metadata check and removal, including graph memberships.
     /// This is not garbage collection; future reference types must be checked before extending it.
     pub fn remove_orphan(&mut self, id: &str, kind: OrphanKind) -> Result<(), PublicationError> {
         if !valid_hex(id, 64) {
             return Err(PublicationError::UnsafePath);
         }
         let count: i64 = self.connection.query_row(
-            "SELECT (SELECT count(*) FROM verified_archives WHERE object_id = ?1) + (SELECT count(*) FROM verified_trees WHERE object_id = ?1)",
+            "SELECT (SELECT count(*) FROM verified_archives WHERE object_id = ?1) + (SELECT count(*) FROM verified_trees WHERE object_id = ?1) + (SELECT count(*) FROM reference_members WHERE object_id = ?1)",
             [id], |row| row.get(0)).map_err(|_| PublicationError::Database)?;
         if count != 0 {
             return Err(PublicationError::Integrity);

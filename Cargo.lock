@@ -255,6 +255,7 @@ name = "dich-store"
 version = "0.1.0"
 dependencies = [
  "dich-apt",
+ "dich-core",
  "dich-deb",
  "getrandom 0.4.3",
  "rusqlite",

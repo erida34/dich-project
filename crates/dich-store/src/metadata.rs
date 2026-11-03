@@ -180,13 +180,13 @@ impl MetadataDb {
             )
             .map_err(|_| MetadataError::Sqlite)?;
         if !(((created || initializing) && app == 0 && version == 0 && empty == 0)
-            || (app == APPLICATION_ID && matches!(version, 1..=3)))
+            || (app == APPLICATION_ID && matches!(version, 1..=4)))
         {
             return Err(MetadataError::UnknownSchema);
         }
         if app == APPLICATION_ID {
             let sql: String = connection.query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'publication_intents'", [], |row| row.get(0)).map_err(|_| MetadataError::UnknownSchema)?;
-            if empty != version
+            if empty != if version == 4 { 5 } else { version }
                 || sql
                     != "CREATE TABLE publication_intents (object_id TEXT PRIMARY KEY NOT NULL, stage_name TEXT NOT NULL, created_at INTEGER NOT NULL)"
             {
@@ -201,10 +201,24 @@ impl MetadataDb {
                 return Err(MetadataError::UnknownSchema);
             }
         }
-        if app == APPLICATION_ID && version == 3 {
+        if app == APPLICATION_ID && version >= 3 {
             let sql: String = connection.query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'verified_trees'", [], |row| row.get(0)).map_err(|_| MetadataError::UnknownSchema)?;
             if sql
                 != "CREATE TABLE verified_trees (object_id TEXT PRIMARY KEY NOT NULL, manifest BLOB NOT NULL, tree_manifest BLOB NOT NULL, total_size INTEGER NOT NULL)"
+            {
+                return Err(MetadataError::UnknownSchema);
+            }
+        }
+        if app == APPLICATION_ID && version >= 4 {
+            let sql: String = connection.query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reference_graphs'", [], |row| row.get(0)).map_err(|_| MetadataError::UnknownSchema)?;
+            if sql
+                != "CREATE TABLE reference_graphs (graph_id TEXT PRIMARY KEY NOT NULL, manifest BLOB NOT NULL)"
+            {
+                return Err(MetadataError::UnknownSchema);
+            }
+            let sql: String = connection.query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reference_members'", [], |row| row.get(0)).map_err(|_| MetadataError::UnknownSchema)?;
+            if sql
+                != "CREATE TABLE reference_members (graph_id TEXT NOT NULL REFERENCES reference_graphs(graph_id), object_id TEXT NOT NULL REFERENCES verified_trees(object_id), PRIMARY KEY(graph_id, object_id))"
             {
                 return Err(MetadataError::UnknownSchema);
             }
@@ -249,6 +263,9 @@ impl MetadataDb {
         if version < 3 {
             migrate_to_v3(&mut connection, false)?;
         }
+        if version < 4 {
+            migrate_to_v4(&mut connection, false)?;
+        }
         #[cfg(test)]
         if initializing {
             init_crash("after_migrations");
@@ -272,6 +289,14 @@ impl MetadataDb {
             _lock: lock,
             connection,
         })
+    }
+    #[cfg(test)]
+    pub(crate) fn test_graph_count(&self) -> i64 {
+        self.connection
+            .query_row("SELECT count(*) FROM reference_graphs", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
     }
     #[cfg(test)]
     pub(crate) fn test_tree_count(&self) -> i64 {
@@ -409,6 +434,16 @@ fn migrate_to_v3(connection: &mut Connection, inject_failure: bool) -> Result<()
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| MetadataError::Sqlite)?;
     tx.execute_batch("CREATE TABLE verified_trees (object_id TEXT PRIMARY KEY NOT NULL, manifest BLOB NOT NULL, tree_manifest BLOB NOT NULL, total_size INTEGER NOT NULL); PRAGMA user_version = 3;").map_err(|_| MetadataError::Sqlite)?;
+    if inject_failure {
+        return Err(MetadataError::Io);
+    }
+    tx.commit().map_err(|_| MetadataError::Sqlite)
+}
+fn migrate_to_v4(connection: &mut Connection, inject_failure: bool) -> Result<(), MetadataError> {
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| MetadataError::Sqlite)?;
+    tx.execute_batch("CREATE TABLE reference_graphs (graph_id TEXT PRIMARY KEY NOT NULL, manifest BLOB NOT NULL); CREATE TABLE reference_members (graph_id TEXT NOT NULL REFERENCES reference_graphs(graph_id), object_id TEXT NOT NULL REFERENCES verified_trees(object_id), PRIMARY KEY(graph_id, object_id)); PRAGMA user_version = 4;").map_err(|_| MetadataError::Sqlite)?;
     if inject_failure {
         return Err(MetadataError::Io);
     }
@@ -589,6 +624,18 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(version, 3);
+        assert!(migrate_to_v4(&mut db, true).is_err());
+        let version: i64 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        let count: i64 = db.query_row("SELECT count(*) FROM sqlite_master WHERE name IN ('reference_graphs', 'reference_members')", [], |row| row.get(0)).unwrap();
+        assert_eq!((version, count), (3, 0));
+        migrate_to_v4(&mut db, false).unwrap();
+        assert_eq!(
+            db.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            4
+        );
     }
     #[test]
     #[ignore = "subprocess initialization crash helper"]
@@ -622,7 +669,7 @@ mod tests {
                 .unwrap();
             assert_eq!(status.code(), Some(88), "{point}");
             let db = MetadataDb::open(root.path()).unwrap_or_else(|e| panic!("{point}: {e}"));
-            assert_eq!(db.schema_version().unwrap(), 3);
+            assert_eq!(db.schema_version().unwrap(), 4);
         }
     }
     #[test]
@@ -647,7 +694,7 @@ mod tests {
                 .unwrap()
                 .schema_version()
                 .unwrap(),
-            3
+            4
         );
     }
 }

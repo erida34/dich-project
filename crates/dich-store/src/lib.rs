@@ -2,6 +2,8 @@
 //! Store identity and future durable storage.
 
 #[cfg(target_os = "linux")]
+mod graph;
+#[cfg(target_os = "linux")]
 mod metadata;
 #[cfg(target_os = "linux")]
 mod publication;
@@ -9,6 +11,8 @@ mod publication;
 mod recovery;
 #[cfg(target_os = "linux")]
 mod tree;
+#[cfg(target_os = "linux")]
+pub use graph::GraphOutcome;
 #[cfg(target_os = "linux")]
 pub use metadata::{MetadataDb, MetadataError};
 #[cfg(target_os = "linux")]
@@ -1137,5 +1141,185 @@ mod tree_tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o2700)).unwrap();
             assert!(db.recovery_inventory().is_err(), "{name}");
         }
+    }
+    #[test]
+    fn graph_snapshots_require_committed_nodes_and_survive_reopen() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let (root, mut db, identity, stage) = fixture();
+        let id = identity.hex();
+        let graph = ReferenceGraph::new(&[&id], &[]).unwrap();
+        assert!(db.put_reference_graph(&graph).is_err());
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let (graph_id, outcome) = db.put_reference_graph(&graph).unwrap();
+        assert_eq!(outcome, crate::GraphOutcome::Published);
+        assert_eq!(
+            db.put_reference_graph(&graph).unwrap().1,
+            crate::GraphOutcome::Reused
+        );
+        drop(db);
+        let mut db = MetadataDb::open(root.path()).unwrap();
+        assert_eq!(
+            db.put_reference_graph(&graph).unwrap(),
+            (graph_id, crate::GraphOutcome::Reused)
+        );
+    }
+    #[test]
+    fn graph_snapshot_rejects_uncommitted_dependency() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let (_root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let root = identity.hex();
+        let missing = "f".repeat(64);
+        let graph = ReferenceGraph::new(&[&root], &[(&root, &missing)]).unwrap();
+        assert!(db.put_reference_graph(&graph).is_err());
+        assert_eq!(db.test_graph_count(), 0);
+    }
+    #[test]
+    fn graph_transaction_rolls_back_and_detects_corrupt_members_and_collisions() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let (_root, mut db, identity, stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        let id = identity.hex();
+        let graph = ReferenceGraph::new(&[&id], &[]).unwrap();
+        assert!(crate::graph::put_graph(&mut db, &graph, FailurePoint::BeforeCommit).is_err());
+        assert_eq!(db.test_graph_count(), 0);
+        let (graph_id, _) = db.put_reference_graph(&graph).unwrap();
+        db.connection
+            .execute(
+                "DELETE FROM reference_members WHERE graph_id = ?1",
+                [&graph_id],
+            )
+            .unwrap();
+        assert!(matches!(
+            db.put_reference_graph(&graph),
+            Err(PublicationError::Integrity)
+        ));
+        db.connection
+            .execute(
+                "UPDATE reference_graphs SET manifest = ?1 WHERE graph_id = ?2",
+                rusqlite::params![b"forged".as_slice(), graph_id],
+            )
+            .unwrap();
+        assert!(matches!(
+            db.put_reference_graph(&graph),
+            Err(PublicationError::Collision)
+        ));
+    }
+    #[test]
+    #[ignore = "subprocess graph transaction crash helper"]
+    fn graph_child_exits_at_commit_boundary() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let Some(root) = std::env::var_os("DICH_GRAPH_CRASH_ROOT") else {
+            return;
+        };
+        let point = match std::env::var("DICH_GRAPH_CRASH_POINT").unwrap().as_str() {
+            "before" => FailurePoint::BeforeCommit,
+            "after" => FailurePoint::AfterCommit,
+            _ => panic!("invalid test point"),
+        };
+        let (_fixture_root, _fixture_db, identity, _stage) = fixture();
+        let id = identity.hex();
+        let graph = ReferenceGraph::new(&[&id], &[]).unwrap();
+        let mut db = MetadataDb::open(std::path::Path::new(&root)).unwrap();
+        let _ = crate::graph::put_graph(&mut db, &graph, point);
+        panic!("expected injected graph exit");
+    }
+    #[test]
+    fn graph_recovers_after_abrupt_exit_at_commit() {
+        use dich_core::reference_graph::ReferenceGraph;
+        for point in ["before", "after"] {
+            let (root, mut db, identity, stage) = fixture();
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+            let id = identity.hex();
+            let graph = ReferenceGraph::new(&[&id], &[]).unwrap();
+            drop(db);
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "tree_tests::graph_child_exits_at_commit_boundary",
+                ])
+                .env("DICH_GRAPH_CRASH_ROOT", root.path())
+                .env("DICH_GRAPH_CRASH_POINT", point)
+                .env("DICH_INJECT_PROCESS_EXIT", "1")
+                .status()
+                .unwrap();
+            assert_eq!(status.code(), Some(86));
+            let mut db = MetadataDb::open(root.path()).unwrap();
+            assert_eq!(db.test_graph_count(), i64::from(point == "after"));
+            let (_, outcome) = db.put_reference_graph(&graph).unwrap();
+            assert_eq!(
+                outcome,
+                if point == "after" {
+                    crate::GraphOutcome::Reused
+                } else {
+                    crate::GraphOutcome::Published
+                }
+            );
+            assert_eq!(db.test_graph_count(), 1);
+        }
+    }
+    #[test]
+    fn graph_stores_dependency_members_and_foreign_keys_prevent_deletion() {
+        use dich_core::reference_graph::ReferenceGraph;
+        let (_root, mut db, identity, stage) = fixture();
+        let (_unused_root, _unused_db, mut other, _unused_stage) = fixture();
+        other.digest[0] ^= 1;
+        other.canonical.push(1);
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        publish_tree_for_test(&mut db, &other, &stage, FailurePoint::None).unwrap();
+        let (a, b) = (identity.hex(), other.hex());
+        let graph = ReferenceGraph::new(&[&a], &[(&a, &b)]).unwrap();
+        let (graph_id, _) = db.put_reference_graph(&graph).unwrap();
+        let count: i64 = db
+            .connection
+            .query_row(
+                "SELECT count(*) FROM reference_members WHERE graph_id = ?1",
+                [&graph_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+        assert!(
+            db.connection
+                .execute("DELETE FROM verified_trees WHERE object_id = ?1", [&b])
+                .is_err()
+        );
+    }
+    #[test]
+    fn orphan_cleanup_refuses_even_dangling_graph_references() {
+        let (root, mut db, identity, stage) = fixture();
+        assert!(
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::AfterRename).is_err()
+        );
+        let id = identity.hex();
+        db.connection
+            .execute_batch("PRAGMA foreign_keys = OFF")
+            .unwrap();
+        db.connection
+            .execute(
+                "INSERT INTO reference_graphs VALUES (?1, ?2)",
+                rusqlite::params!["f".repeat(64), b"bad".as_slice()],
+            )
+            .unwrap();
+        db.connection
+            .execute(
+                "INSERT INTO reference_members VALUES (?1, ?2)",
+                rusqlite::params!["f".repeat(64), id],
+            )
+            .unwrap();
+        db.connection
+            .execute_batch("PRAGMA foreign_keys = ON")
+            .unwrap();
+        assert!(
+            db.remove_orphan(&identity.hex(), crate::OrphanKind::Tree)
+                .is_err()
+        );
+        assert!(
+            root.path()
+                .join("objects")
+                .join(format!("{}.tree", identity.hex()))
+                .exists()
+        );
     }
 }
