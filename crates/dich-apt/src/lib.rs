@@ -11,7 +11,7 @@ mod artifact;
 #[cfg(target_os = "linux")]
 mod fetch_exact;
 #[cfg(target_os = "linux")]
-pub use fetch_exact::{FetchExactError, FetchRequest, fetch_exact};
+pub use fetch_exact::{FetchExactError, FetchRequest, FetchResult, FetchState, fetch_exact};
 #[cfg(target_os = "linux")]
 mod cache;
 #[cfg(target_os = "linux")]

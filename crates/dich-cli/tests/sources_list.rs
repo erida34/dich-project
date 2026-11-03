@@ -322,6 +322,52 @@ fn cached_query_cli_outputs_authenticated_fixture_offline() {
         let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
         assert_eq!(error["error"]["code"], "fetch_failed");
     }
+    let blob =
+        cache_dir.join("blob-0c190c47a57eaf9b339049983978ff0bec52a1d19576c679c40a366cba1d4bc6");
+    let fixture = include_bytes!("../../dich-apt/tests/fixtures/index/fixture.deb");
+    fs::write(&blob, fixture).unwrap();
+    fs::set_permissions(&blob, fs::Permissions::from_mode(0o600)).unwrap();
+    let cached_fetch = || {
+        Command::new(env!("CARGO_BIN_EXE_dich"))
+            .args([
+                "--json",
+                "--config",
+                config.to_str().unwrap(),
+                "--cache",
+                cache_dir.to_str().unwrap(),
+                "--max-age-seconds",
+                "86400",
+                "--allow-missing-valid-until",
+                "fetch",
+                "fixture",
+                "--exact-version",
+                "1.0-1",
+                "--component",
+                "main",
+                "--max-bytes",
+                "1024",
+            ])
+            .output()
+            .unwrap()
+    };
+    let cached = cached_fetch();
+    assert!(
+        cached.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cached.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&cached.stdout).unwrap();
+    assert_eq!(body["state"], "cached");
+    assert_eq!(body["installable"], false);
+    assert_eq!(
+        body["artifact_sha256"],
+        "0c190c47a57eaf9b339049983978ff0bec52a1d19576c679c40a366cba1d4bc6"
+    );
+    fs::write(&blob, b"corrupt").unwrap();
+    let bad_cached = cached_fetch();
+    assert!(!bad_cached.status.success());
+    assert!(bad_cached.stdout.is_empty());
+    fs::write(&blob, fixture).unwrap();
     let index_path = fs::read_dir(&cache_dir)
         .unwrap()
         .map(|e| e.unwrap().path())

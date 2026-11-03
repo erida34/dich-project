@@ -72,4 +72,4 @@ The experimental `store ls` output is metadata only. `store verify` checks one o
 
 `dich inspect FILE` treats the file as unauthenticated input, reads a bounded regular file without following symlinks, does not extract or execute package scripts, and does not claim installability. It rejects FIFO/device inputs and unsupported archive forms.
 
-Experimental `fetch` requires an exact version, component, one configured source and explicit freshness policy. It reauthenticates cached signed Release/index metadata and verifies the downloaded size and SHA256 before and after cache publication. Successful live CLI download remains unverified in the current environment; downloaded does not mean installable.
+Experimental `fetch` requires an exact version, component, one configured source and explicit freshness policy. It reauthenticates cached signed Release/index metadata and checks the size and SHA256 of reused or downloaded bytes; a corrupt cached blob is an error rather than a silent network fallback. Successful live CLI download remains unverified in the current environment; downloaded does not mean installable.

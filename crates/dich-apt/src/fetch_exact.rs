@@ -1,5 +1,5 @@
 //! Exact artifact download through authenticated cached Release and Packages metadata.
-use crate::cache::FailurePoint;
+use crate::cache::{CacheError, FailurePoint};
 use crate::transport::{HttpsTransport, Transport};
 use crate::{
     FreshnessPolicy, IndexLimits, IndexedArtifact, SnapshotJournal, Source, authorize_artifact,
@@ -25,13 +25,23 @@ pub struct FetchRequest<'a> {
     pub version: &'a str,
     pub max_bytes: u64,
 }
-/// Download an exact indexed artifact and publish it into the protected verified cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchState {
+    Downloaded,
+    Cached,
+}
+#[derive(Debug)]
+pub struct FetchResult {
+    pub artifact: IndexedArtifact,
+    pub state: FetchState,
+}
+/// Reuse a revalidated cached artifact or download it into the protected verified cache.
 pub fn fetch_exact(
     source: &Source,
     journal: &SnapshotJournal,
     policy: FreshnessPolicy,
     request: FetchRequest<'_>,
-) -> Result<IndexedArtifact, FetchExactError> {
+) -> Result<FetchResult, FetchExactError> {
     fetch_exact_with_transport(
         source,
         journal,
@@ -48,7 +58,7 @@ pub(crate) fn fetch_exact_with_transport(
     request: FetchRequest<'_>,
     transport: &mut impl Transport,
     clock: impl Fn() -> SystemTime + Copy,
-) -> Result<IndexedArtifact, FetchExactError> {
+) -> Result<FetchResult, FetchExactError> {
     if request.max_bytes == 0 || request.max_bytes > 256 * 1024 * 1024 {
         return Err(FetchExactError::Artifact);
     }
@@ -71,6 +81,19 @@ pub(crate) fn fetch_exact_with_transport(
         .map_err(|_| FetchExactError::Metadata)?;
     let authorized =
         authorize_artifact(&release, &artifact, clock()).map_err(|_| FetchExactError::Metadata)?;
+    if artifact.size() > request.max_bytes {
+        return Err(FetchExactError::Artifact);
+    }
+    match journal.load_artifact_with_clock(&authorized, clock) {
+        Ok(_) => {
+            return Ok(FetchResult {
+                artifact,
+                state: FetchState::Cached,
+            });
+        }
+        Err(CacheError::NotFound) => {}
+        Err(_) => return Err(FetchExactError::Cache),
+    }
     let verified = journal
         .fetch_with_transport(&authorized, request.max_bytes, transport, clock)
         .map_err(|_| FetchExactError::Artifact)?;
@@ -80,5 +103,8 @@ pub(crate) fn fetch_exact_with_transport(
     journal
         .load_artifact_with_clock(&authorized, clock)
         .map_err(|_| FetchExactError::Cache)?;
-    Ok(artifact)
+    Ok(FetchResult {
+        artifact,
+        state: FetchState::Downloaded,
+    })
 }

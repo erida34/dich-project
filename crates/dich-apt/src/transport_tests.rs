@@ -797,9 +797,60 @@ fn exact_fetch_requires_signed_cached_index_and_verified_artifact() {
         || now,
     )
     .unwrap();
-    assert_eq!(result.name(), "fixture");
-    assert_eq!(result.version(), "1.0-1");
+    assert_eq!(result.artifact.name(), "fixture");
+    assert_eq!(result.artifact.version(), "1.0-1");
+    assert_eq!(result.state, crate::FetchState::Downloaded);
     assert_eq!(fetch.calls.len(), 1);
+    let mut cached = Fake {
+        responses: VecDeque::new(),
+        calls: vec![],
+    };
+    let reused = crate::fetch_exact::fetch_exact_with_transport(
+        source,
+        &journal,
+        freshness,
+        crate::FetchRequest {
+            component: "main",
+            name: "fixture",
+            version: "1.0-1",
+            max_bytes: 1024,
+        },
+        &mut cached,
+        || now,
+    )
+    .unwrap();
+    assert_eq!(reused.state, crate::FetchState::Cached);
+    assert!(cached.calls.is_empty());
+    let hash = result
+        .artifact
+        .sha256()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let blob = dir.path().join(format!("blob-{hash}"));
+    fs::write(&blob, b"corrupt").unwrap();
+    let mut corrupted = Fake {
+        responses: VecDeque::new(),
+        calls: vec![],
+    };
+    assert!(
+        crate::fetch_exact::fetch_exact_with_transport(
+            source,
+            &journal,
+            freshness,
+            crate::FetchRequest {
+                component: "main",
+                name: "fixture",
+                version: "1.0-1",
+                max_bytes: 1024
+            },
+            &mut corrupted,
+            || now
+        )
+        .is_err()
+    );
+    assert!(corrupted.calls.is_empty());
+    fs::remove_file(blob).unwrap();
     let mut bad = Fake {
         responses: VecDeque::from([response(200, None, b"bad")]),
         calls: vec![],

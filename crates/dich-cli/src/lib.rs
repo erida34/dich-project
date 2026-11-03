@@ -52,7 +52,7 @@ pub enum Commands {
         #[arg(long)]
         architecture: String,
     },
-    /// Download one exact package into the authenticated cache (does not install)
+    /// Download or reuse one exact package in the authenticated cache (does not install)
     Fetch {
         package: String,
         /// Exact Debian package version
@@ -502,6 +502,11 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     max_bytes,
                 };
                 let artifact=dich_apt::fetch_exact(&sources[0],&journal,freshness,request).map_err(|_| CliError { code:"fetch_failed",message:"could not authenticate, download and cache the requested artifact",trace:Vec::new() })?;
+                let state = match artifact.state {
+                    dich_apt::FetchState::Downloaded => "downloaded",
+                    dich_apt::FetchState::Cached => "cached",
+                };
+                let artifact = artifact.artifact;
                 let artifact_hash = artifact
                     .sha256()
                     .iter()
@@ -515,11 +520,11 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 if cli.json {
                     println!(
                         "{}",
-                        serde_json::json!({"schema_version":1,"status":"completed","state":"downloaded","installable":false,"name":artifact.name(),"version":artifact.version(),"architecture":artifact.architecture(),"size":artifact.size(),"artifact_sha256":artifact_hash,"release_sha256":release_hash,"component":component})
+                        serde_json::json!({"schema_version":1,"status":"completed","state":state,"installable":false,"name":artifact.name(),"version":artifact.version(),"architecture":artifact.architecture(),"size":artifact.size(),"artifact_sha256":artifact_hash,"release_sha256":release_hash,"component":component})
                     );
                 } else {
                     println!(
-                        "completed: downloaded {}={} ({}, {} bytes) to verified cache; installability not established",
+                        "completed: {state} {}={} ({}, {} bytes) in verified cache; installability not established",
                         artifact.name(),
                         artifact.version(),
                         artifact.architecture(),
