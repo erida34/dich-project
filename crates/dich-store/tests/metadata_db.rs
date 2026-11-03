@@ -329,3 +329,52 @@ fn rejects_special_mode_bits_on_metadata_paths() {
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o2700)).unwrap();
     assert!(MetadataDb::open(root.path()).is_err());
 }
+
+#[test]
+fn open_existing_never_initializes_missing_store() {
+    let root = private_dir();
+    assert!(MetadataDb::open_existing(root.path()).is_err());
+    assert!(!root.path().join("metadata.sqlite3").exists());
+    assert!(!root.path().join("metadata.lock").exists());
+    drop(MetadataDb::open(root.path()).unwrap());
+    assert_eq!(
+        MetadataDb::open_existing(root.path())
+            .unwrap()
+            .schema_version()
+            .unwrap(),
+        4
+    );
+}
+#[test]
+fn open_existing_rejects_missing_lock_and_initialization_marker() {
+    let root = private_dir();
+    drop(MetadataDb::open(root.path()).unwrap());
+    std::fs::remove_file(root.path().join("metadata.lock")).unwrap();
+    assert!(MetadataDb::open_existing(root.path()).is_err());
+    assert!(!root.path().join("metadata.lock").exists());
+    let root = private_dir();
+    let marker = root.path().join("metadata.initializing");
+    std::fs::write(&marker, b"dich-metadata-init-v1\n").unwrap();
+    std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(MetadataDb::open_existing(root.path()).is_err());
+    assert!(!root.path().join("metadata.sqlite3").exists());
+}
+
+#[test]
+fn open_existing_does_not_upgrade_older_schema() {
+    let root = private_dir();
+    let path = root.path().join("metadata.sqlite3");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TABLE publication_intents (object_id TEXT PRIMARY KEY NOT NULL, stage_name TEXT NOT NULL, created_at INTEGER NOT NULL); PRAGMA application_id = 1145652040; PRAGMA user_version = 1;").unwrap();
+    drop(db);
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let lock = root.path().join("metadata.lock");
+    std::fs::write(&lock, b"").unwrap();
+    std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(MetadataDb::open_existing(root.path()).is_err());
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let version: i64 = db
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 1);
+}

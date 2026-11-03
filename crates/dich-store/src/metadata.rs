@@ -42,7 +42,7 @@ impl MetadataDb {
     /// Never adopts or deletes a database that might contain state or SQLite sidecars.
     pub fn recover_empty_initialization(path: &Path) -> Result<(), MetadataError> {
         let root = open_private_directory(path)?;
-        let _lock = acquire_lock(&root)?;
+        let _lock = acquire_lock(&root, true)?;
         let mut reader = fs::Dir::read_from(&root).map_err(|_| MetadataError::Io)?;
         while let Some(entry) = reader.read() {
             let entry = entry.map_err(|_| MetadataError::Io)?;
@@ -69,7 +69,7 @@ impl MetadataDb {
     /// Explicitly remove a partial initialization marker only when no database or other state exists.
     pub fn recover_abandoned_marker(path: &Path) -> Result<(), MetadataError> {
         let root = open_private_directory(path)?;
-        let _lock = acquire_lock(&root)?;
+        let _lock = acquire_lock(&root, true)?;
         let fresh = fs::openat(
             &root,
             ".",
@@ -109,8 +109,16 @@ impl MetadataDb {
         Ok(())
     }
     pub fn open(path: &Path) -> Result<Self, MetadataError> {
+        Self::open_mode(path, false)
+    }
+    /// Open an existing, fully initialized current-schema store without initializing or migrating it.
+    /// SQLite may create or recover WAL sidecars during opening.
+    pub fn open_existing(path: &Path) -> Result<Self, MetadataError> {
+        Self::open_mode(path, true)
+    }
+    fn open_mode(path: &Path, existing_only: bool) -> Result<Self, MetadataError> {
         let root = open_private_directory(path)?;
-        let lock = acquire_lock(&root)?;
+        let lock = acquire_lock(&root, !existing_only)?;
         for name in [
             "metadata.sqlite3-wal",
             "metadata.sqlite3-shm",
@@ -120,9 +128,15 @@ impl MetadataDb {
         }
         let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
         let mut initializing = check_init_marker(&root)?;
+        if existing_only && initializing {
+            return Err(MetadataError::UnknownSchema);
+        }
         let (file, created) = match fs::openat(&root, "metadata.sqlite3", flags, Mode::empty()) {
             Ok(file) => (file, false),
             Err(rustix::io::Errno::NOENT) => {
+                if existing_only {
+                    return Err(MetadataError::UnknownSchema);
+                }
                 ensure_initializing_directory(&root, false)?;
                 if !initializing {
                     create_init_marker(&root)?;
@@ -179,6 +193,9 @@ impl MetadataDb {
                 |row| row.get(0),
             )
             .map_err(|_| MetadataError::Sqlite)?;
+        if existing_only && (app != APPLICATION_ID || version != 4) {
+            return Err(MetadataError::UnknownSchema);
+        }
         if !(((created || initializing) && app == 0 && version == 0 && empty == 0)
             || (app == APPLICATION_ID && matches!(version, 1..=4)))
         {
@@ -227,6 +244,9 @@ impl MetadataDb {
             .pragma_query_value(None, "journal_mode", |row| row.get(0))
             .map_err(|_| MetadataError::Sqlite)?;
         if !mode.eq_ignore_ascii_case("wal") {
+            if existing_only {
+                return Err(MetadataError::UnknownSchema);
+            }
             let selected: String = connection
                 .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
                 .map_err(|_| MetadataError::Sqlite)?;
@@ -277,7 +297,9 @@ impl MetadataDb {
         ] {
             check_sidecar(&root, name)?;
         }
-        fs::fsync(&root).map_err(|_| MetadataError::Io)?;
+        if !existing_only {
+            fs::fsync(&root).map_err(|_| MetadataError::Io)?;
+        }
         if initializing {
             fs::unlinkat(&root, "metadata.initializing", AtFlags::empty())
                 .map_err(|_| MetadataError::Io)?;
@@ -449,14 +471,13 @@ fn migrate_to_v4(connection: &mut Connection, inject_failure: bool) -> Result<()
     }
     tx.commit().map_err(|_| MetadataError::Sqlite)
 }
-fn acquire_lock(root: &OwnedFd) -> Result<OwnedFd, MetadataError> {
-    let lock = fs::openat(
-        root,
-        "metadata.lock",
-        OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-        Mode::from_raw_mode(0o600),
-    )
-    .map_err(|_| MetadataError::UnsafePath)?;
+fn acquire_lock(root: &OwnedFd, create: bool) -> Result<OwnedFd, MetadataError> {
+    let mut flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
+    if create {
+        flags |= OFlags::CREATE;
+    }
+    let lock = fs::openat(root, "metadata.lock", flags, Mode::from_raw_mode(0o600))
+        .map_err(|_| MetadataError::UnsafePath)?;
     check_file(&lock)?;
     let deadline = std::time::Instant::now() + Duration::from_secs(1);
     loop {

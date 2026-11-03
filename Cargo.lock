@@ -226,7 +226,10 @@ dependencies = [
  "clap_mangen",
  "dich-apt",
  "dich-core",
+ "dich-store",
+ "rusqlite",
  "serde_json",
+ "sha2",
  "tempfile",
 ]
 

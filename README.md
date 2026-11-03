@@ -2,7 +2,7 @@
 
 **Dich** — a version-aware, dependency-sharing package store for Debian and Ubuntu sources, written in Rust.
 
-> **Status: experimental.** The executable can list configured sources, update authenticated repository metadata and query the verified local cache. An experimental, limited metadata planner is available for one source; package installation, a complete Debian resolver, immutable store and ABI relocation are not implemented. Do not use it as a production package manager.
+> **Status: experimental.** The executable can list configured sources, update authenticated repository metadata and query the verified local cache. An experimental, limited metadata planner is available for one source, and existing experimental stores can be listed or checked against local metadata; package installation, a complete Debian resolver, hard immutable storage and ABI relocation are not implemented. Do not use it as a production package manager.
 
 ## Vision
 
@@ -31,7 +31,7 @@ cargo test --workspace --all-targets
 cargo run -p dich-cli -- install openssl@3
 ```
 
-The last command currently exits with an explicit **not implemented** error. To inspect a trusted source policy without contacting repositories, run `dich --config /absolute/path/sources.toml sources list` (add `--json` for versioned output). Listing means configured, not authenticated or available. For metadata queries, configure real trusted source policy and keyrings as described in `docs/adr/0002-source-policy.md` and `docs/adr/0008-cli-sources.md`. Create a protected local cache directory owned by the invoking user (or root); Dich will not initialize it. Set a suitable maximum metadata age explicitly according to your repository and security requirements, then run:
+The last command currently exits with an explicit **unsupported** error. To inspect a trusted source policy without contacting repositories, run `dich --config /absolute/path/sources.toml sources list` (add `--json` for versioned output). Listing means configured, not authenticated or available. For metadata queries, configure real trusted source policy and keyrings as described in `docs/adr/0002-source-policy.md` and `docs/adr/0008-cli-sources.md`. Create a protected local cache directory owned by the invoking user (or root); Dich will not initialize it. Set a suitable maximum metadata age explicitly according to your repository and security requirements, then run:
 
 ```sh
 dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 update
@@ -44,7 +44,7 @@ If the repository omits `Valid-Until`, `--allow-missing-valid-until` explicitly 
 dich --config /absolute/path/sources.toml --cache /absolute/path/cache --max-age-seconds 86400 plan hello --distribution ubuntu --suite noble --architecture amd64
 ```
 
-Plans are labeled `planned` and include signed-snapshot and artifact SHA256 identities in JSON, but are not installable and cannot yet be replayed as locks. The current resolver supports a narrow relationship subset and rejects, among other cases, most multiarch qualifiers and essential/required packages; it does not infer host packages. The result may therefore be `unsupported` even for ordinary packages such as `hello`. Pre-Depends cycles are conservatively rejected, and the displayed list is not an installation order. It does not check scripts, services or ABI compatibility. Remaining examples below show the *planned* package interface.
+Plans are labeled `planned` and include signed-snapshot and artifact SHA256 identities in JSON, but are not installable and cannot yet be replayed as locks. The current resolver supports a narrow relationship subset and rejects, among other cases, most multiarch qualifiers and essential/required packages; it does not infer host packages. The result may therefore be `unsupported` even for ordinary packages such as `hello`. Pre-Depends cycles are conservatively rejected, and the displayed list is not an installation order. It does not check scripts, services or ABI compatibility. An existing protected experimental store created through library APIs can be inspected with `dich --store-dir /absolute/path/store store ls` and an exact object can be checked with `dich --store-dir /absolute/path/store store verify OBJECT_ID --kind archive` (or `--kind tree`). Listing reads metadata without checking contents; verification checks local metadata and bytes without refreshing repository signatures or proving compatibility. These commands do not initialize a store or migrate its schema. Remaining examples below show the *planned* package interface.
 
 ## Planned CLI
 
@@ -54,8 +54,6 @@ dich inspect ./libssl3.deb
 dich install libssl3@3.0 --profile default
 dich profile list
 dich rollback --profile default
-dich store ls
-dich store verify
 dich gc --dry-run
 ```
 
@@ -65,9 +63,9 @@ dich gc --dry-run
 crates/dich-cli/      CLI binary and command definitions
 crates/dich-core/     typed domain models and invariants
 crates/dich-apt/      repository trust, metadata and cache libraries (partial)
-crates/dich-deb/      safe .deb inspection/extraction (planned)
+crates/dich-deb/      bounded .deb inspection and private staging (partial)
 crates/dich-elf/      ELF and ABI analysis (planned)
-crates/dich-store/    durable shared store/profiles/GC (planned)
+crates/dich-store/    experimental store objects and graph APIs; profiles/GC planned
 docs/                architecture, threat model, ADRs and policies
 packaging/           distro packaging helpers and examples
 scripts/             documentation verification

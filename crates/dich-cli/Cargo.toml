@@ -26,10 +26,13 @@ clap_mangen.workspace = true
 clap_complete.workspace = true
 dich-apt = { path = "../dich-apt" }
 dich-core = { path = "../dich-core" }
+dich-store = { path = "../dich-store" }
 serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
+sha2 = "0.10"
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
 
 [package.metadata.deb]
 name = "dich"

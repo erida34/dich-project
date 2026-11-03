@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 //! Dich command-line interface; package installation remains unsupported.
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -12,6 +12,9 @@ pub struct Cli {
     /// Existing protected cache directory
     #[arg(long, global = true, default_value = "/var/cache/dich")]
     pub cache: PathBuf,
+    /// Existing protected store directory (never created by read commands)
+    #[arg(long, global = true, default_value = "/var/lib/dich")]
+    pub store_dir: PathBuf,
     /// Explicit maximum age for signed Release metadata, in seconds
     #[arg(long, global = true)]
     pub max_age_seconds: Option<u64>,
@@ -70,7 +73,7 @@ pub enum Commands {
         #[arg(long, default_value = "default")]
         profile: String,
     },
-    /// Manage local store (planned)
+    /// Inspect locally recorded store objects
     Store {
         #[command(subcommand)]
         command: StoreCommands,
@@ -95,8 +98,19 @@ pub enum Commands {
 }
 #[derive(Debug, Subcommand)]
 pub enum StoreCommands {
+    /// List committed metadata without checking object bytes
     Ls,
-    Verify,
+    /// Check one object against local metadata; does not refresh repository trust
+    Verify {
+        id: String,
+        #[arg(long, value_enum)]
+        kind: StoreKind,
+    },
+}
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum StoreKind {
+    Archive,
+    Tree,
 }
 #[derive(Debug, Subcommand)]
 pub enum ProfileCommands {
@@ -424,6 +438,83 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 Err(CliError {
                     code: "unsupported_platform",
                     message: "repository update requires Linux",
+                    trace: Vec::new(),
+                })
+            }
+        }
+        Commands::Store { command } => {
+            #[cfg(target_os = "linux")]
+            {
+                let db = dich_store::MetadataDb::open_existing(&cli.store_dir).map_err(|_| {
+                    CliError {
+                        code: "store_open_failed",
+                        message: "could not open existing protected store with current schema",
+                        trace: Vec::new(),
+                    }
+                })?;
+                match command {
+                    StoreCommands::Ls => {
+                        let records = db.list_objects().map_err(|_| CliError {
+                            code: "store_inspect_failed",
+                            message: "could not inspect store metadata",
+                            trace: Vec::new(),
+                        })?;
+                        if cli.json {
+                            let objects: Vec<_> = records.iter().map(|r| serde_json::json!({"id":r.id,"kind":match r.kind { dich_store::ObjectKind::Archive => "archive", dich_store::ObjectKind::Tree => "tree" }, "stored_bytes":r.stored_bytes})).collect();
+                            println!(
+                                "{}",
+                                serde_json::json!({"schema_version":1,"status":"completed","scope":"metadata_only","objects":objects})
+                            );
+                        } else {
+                            println!("completed: metadata only; object contents not verified");
+                            for r in records {
+                                println!(
+                                    "{}\t{}\t{}",
+                                    r.id,
+                                    match r.kind {
+                                        dich_store::ObjectKind::Archive => "archive",
+                                        dich_store::ObjectKind::Tree => "tree",
+                                    },
+                                    r.stored_bytes
+                                );
+                            }
+                        }
+                    }
+                    StoreCommands::Verify { id, kind } => {
+                        let (kind_name, bytes) = match kind {
+                            StoreKind::Archive => (
+                                "archive",
+                                db.verify_archive_object(&id).map(|r| r.total_bytes),
+                            ),
+                            StoreKind::Tree => {
+                                ("tree", db.verify_tree_object(&id).map(|r| r.total_bytes))
+                            }
+                        };
+                        let bytes = bytes.map_err(|_| CliError {
+                            code: "store_verify_failed",
+                            message: "object does not match protected local metadata",
+                            trace: Vec::new(),
+                        })?;
+                        if cli.json {
+                            println!(
+                                "{}",
+                                serde_json::json!({"schema_version":1,"status":"completed","scope":"local_metadata_only","id":id,"kind":kind_name,"stored_bytes":bytes})
+                            );
+                        } else {
+                            println!(
+                                "completed: {kind_name} {id} matches local metadata ({bytes} bytes); repository freshness and compatibility not checked"
+                            );
+                        }
+                    }
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = command;
+                Err(CliError {
+                    code: "unsupported_platform",
+                    message: "store operations require Linux",
                     trace: Vec::new(),
                 })
             }
