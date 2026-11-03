@@ -1,7 +1,7 @@
 //! SQLite metadata foundation. No object publication is implemented here.
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use rustix::{
-    fs::{self, CWD, FileType, Mode, OFlags},
+    fs::{self, AtFlags, CWD, FileType, Mode, OFlags},
     process::geteuid,
 };
 use std::{
@@ -37,6 +37,34 @@ pub struct MetadataDb {
     _lock: OwnedFd,
 }
 impl MetadataDb {
+    /// Explicitly discard only a zero-length initial database in an otherwise empty private store.
+    /// Never adopts or deletes a database that might contain state or SQLite sidecars.
+    pub fn recover_empty_initialization(path: &Path) -> Result<(), MetadataError> {
+        let root = open_private_directory(path)?;
+        let _lock = acquire_lock(&root)?;
+        let mut reader = fs::Dir::read_from(&root).map_err(|_| MetadataError::Io)?;
+        while let Some(entry) = reader.read() {
+            let entry = entry.map_err(|_| MetadataError::Io)?;
+            let name = entry.file_name().to_bytes();
+            if !matches!(name, b"." | b".." | b"metadata.lock" | b"metadata.sqlite3") {
+                return Err(MetadataError::UnknownSchema);
+            }
+        }
+        let file = fs::openat(
+            &root,
+            "metadata.sqlite3",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(|_| MetadataError::UnsafePath)?;
+        check_file(&file)?;
+        if fs::fstat(&file).map_err(|_| MetadataError::Io)?.st_size != 0 {
+            return Err(MetadataError::UnknownSchema);
+        }
+        fs::unlinkat(&root, "metadata.sqlite3", AtFlags::empty()).map_err(|_| MetadataError::Io)?;
+        fs::fsync(&root).map_err(|_| MetadataError::Io)?;
+        Ok(())
+    }
     pub fn open(path: &Path) -> Result<Self, MetadataError> {
         let root = open_private_directory(path)?;
         let lock = acquire_lock(&root)?;
@@ -385,5 +413,22 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(version, 2);
+        assert!(migrate_to_v3(&mut db, true).is_err());
+        let version: i64 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        let count: i64 = db
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'verified_trees'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!((version, count), (2, 0));
+        migrate_to_v3(&mut db, false).unwrap();
+        let version: i64 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 3);
     }
 }

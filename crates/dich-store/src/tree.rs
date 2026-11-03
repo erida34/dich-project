@@ -158,7 +158,7 @@ fn parse_hash(hex: &str) -> Result<[u8; 32], PublicationError> {
     }
     Ok(result)
 }
-fn publish_tree(
+pub(crate) fn publish_tree(
     db: &mut MetadataDb,
     identity: &StoreIdentity,
     stage: &impl TreeInput,

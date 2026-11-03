@@ -160,3 +160,41 @@ fn upgrades_known_v1_metadata_schema_transactionally() {
     let db = MetadataDb::open(root.path()).unwrap();
     assert_eq!(db.schema_version().unwrap(), 3);
 }
+
+#[test]
+fn explicit_empty_initialization_recovery_is_narrow() {
+    let root = private_dir();
+    let path = root.path().join("metadata.sqlite3");
+    std::fs::write(&path, b"").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(MetadataDb::open(root.path()).is_err());
+    MetadataDb::recover_empty_initialization(root.path()).unwrap();
+    assert_eq!(
+        MetadataDb::open(root.path())
+            .unwrap()
+            .schema_version()
+            .unwrap(),
+        3
+    );
+}
+#[test]
+fn empty_initialization_recovery_refuses_existing_state_and_sidecars() {
+    for name in [
+        "objects",
+        "staging",
+        "metadata.sqlite3-wal",
+        "metadata.sqlite3-shm",
+        "metadata.sqlite3-journal",
+    ] {
+        let root = private_dir();
+        let path = root.path().join("metadata.sqlite3");
+        std::fs::write(&path, b"").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(root.path().join(name), b"sentinel").unwrap();
+        assert!(
+            MetadataDb::recover_empty_initialization(root.path()).is_err(),
+            "{name}"
+        );
+        assert!(path.exists());
+    }
+}

@@ -1103,4 +1103,29 @@ mod tree_tests {
         );
         assert_eq!(std::fs::read(target).unwrap(), b"hello");
     }
+    #[test]
+    fn tree_authentication_failure_leaves_only_unreferenced_object() {
+        let (_root, mut db, identity, stage) = fixture();
+        let error =
+            crate::tree::publish_tree(&mut db, &identity, &stage, FailurePoint::None, || {
+                Err(PublicationError::Authentication)
+            });
+        assert!(matches!(error, Err(PublicationError::Authentication)));
+        assert_eq!(db.test_tree_count(), 0);
+        assert_eq!(
+            db.recovery_inventory().unwrap().orphan_trees,
+            vec![identity.hex()]
+        );
+        assert!(publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).is_ok());
+    }
+    #[test]
+    fn same_identity_with_changed_tree_manifest_fails_closed() {
+        let (_root, mut db, identity, mut stage) = fixture();
+        publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None).unwrap();
+        stage.files[0].sha256 = "00".repeat(32);
+        assert!(matches!(
+            publish_tree_for_test(&mut db, &identity, &stage, FailurePoint::None),
+            Err(PublicationError::Collision)
+        ));
+    }
 }
