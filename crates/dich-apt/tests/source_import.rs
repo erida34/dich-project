@@ -11,7 +11,7 @@ fn policy() -> SourcePolicy {
         "bookworm",
         &["main", "contrib"],
         "amd64",
-        "/usr/share/keyrings/debian-archive-keyring.pgp",
+        "/usr/share/keyrings/debian-archive-bookworm-stable.gpg",
         &[KEY],
     )
     .unwrap()
@@ -29,7 +29,7 @@ fn imports_deb822_with_explicit_policy_and_folded_components() {
     assert_eq!(source.architecture(), "amd64");
     assert_eq!(
         source.keyring(),
-        "/usr/share/keyrings/debian-archive-keyring.pgp"
+        "/usr/share/keyrings/debian-archive-bookworm-stable.gpg"
     );
     assert_eq!(source.fingerprints(), &[KEY]);
 }
@@ -45,14 +45,14 @@ fn rejects_source_options_that_relax_or_change_policy() {
         FIXTURE.replace("contrib", "non-free"),
         FIXTURE.replace("amd64", "arm64"),
         FIXTURE.replace(
-            "/usr/share/keyrings/debian-archive-keyring.pgp",
+            "/usr/share/keyrings/debian-archive-bookworm-stable.gpg",
             "/tmp/other.gpg",
         ),
         FIXTURE.replace("Signed-By:", "Trusted: yes\nSigned-By:"),
         FIXTURE.replace("Types: deb", "Types: deb-src"),
         FIXTURE.replace("Signed-By:", "Signed-By: /tmp/a\nSigned-By:"),
         FIXTURE.replace(
-            "Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp",
+            "Signed-By: /usr/share/keyrings/debian-archive-bookworm-stable.gpg",
             "",
         ),
         format!("{FIXTURE} {OTHER_KEY}\n"),
@@ -83,8 +83,11 @@ fn handles_disabled_stanzas_and_rejects_malformed_or_unbounded_input() {
 #[test]
 fn multiple_stanzas_and_fingerprint_restriction() {
     let source = FIXTURE.replace(
-        "debian-archive-keyring.pgp",
-        &format!("debian-archive-keyring.pgp {}", KEY.to_ascii_lowercase()),
+        "debian-archive-bookworm-stable.gpg",
+        &format!(
+            "debian-archive-bookworm-stable.gpg {}",
+            KEY.to_ascii_lowercase()
+        ),
     );
     let two = format!("{source}\n{source}");
     let parsed = import_sources(&two, &policy()).unwrap();

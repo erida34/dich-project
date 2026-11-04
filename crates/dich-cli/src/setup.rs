@@ -24,7 +24,7 @@ fn supported_default(id: &str, suite: &str, architecture: &str) -> Option<Defaul
             distribution: "debian",
             suite: "bookworm",
             uri: "https://deb.debian.org/debian",
-            keyring: "/usr/share/keyrings/debian-archive-keyring.pgp",
+            keyring: "/usr/share/keyrings/debian-archive-bookworm-stable.gpg",
             fingerprint: "B8B80B5B623EAB6AD8775C45B7C5D7D6350947F8",
         }),
         ("debian", "trixie") => Some(DefaultSource {
@@ -279,13 +279,18 @@ mod tests {
 
     #[test]
     fn debian_defaults_use_the_regular_keyring_file_not_the_symlink() {
-        for suite in ["bookworm", "trixie"] {
-            let source = supported_default("debian", suite, "amd64").unwrap();
-            assert_eq!(
-                source.keyring,
-                "/usr/share/keyrings/debian-archive-keyring.pgp"
-            );
-        }
+        assert_eq!(
+            supported_default("debian", "bookworm", "amd64")
+                .unwrap()
+                .keyring,
+            "/usr/share/keyrings/debian-archive-bookworm-stable.gpg"
+        );
+        assert_eq!(
+            supported_default("debian", "trixie", "amd64")
+                .unwrap()
+                .keyring,
+            "/usr/share/keyrings/debian-archive-keyring.pgp"
+        );
     }
 
     #[test]

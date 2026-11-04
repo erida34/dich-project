@@ -8,5 +8,5 @@ uri = "https://deb.debian.org/debian"
 suite = "bookworm"
 components = ["main", "contrib"]
 architecture = "amd64"
-keyring = "/usr/share/keyrings/debian-archive-keyring.pgp"
+keyring = "/usr/share/keyrings/debian-archive-bookworm-stable.gpg"
 fingerprints = ["0123456789ABCDEF0123456789ABCDEF01234567"]

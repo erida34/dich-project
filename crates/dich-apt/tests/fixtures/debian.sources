@@ -5,4 +5,4 @@ Suites: bookworm
 Components: main
  contrib
 Architectures: amd64
-Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+Signed-By: /usr/share/keyrings/debian-archive-bookworm-stable.gpg

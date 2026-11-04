@@ -94,7 +94,7 @@ uri = "https://deb.debian.org/debian"
 suite = "bookworm"
 components = ["main"]
 architecture = "amd64"
-keyring = "/usr/share/keyrings/debian-archive-keyring.pgp"
+keyring = "/usr/share/keyrings/debian-archive-bookworm-stable.gpg"
 fingerprints = [
     "B8B80B5B623EAB6AD8775C45B7C5D7D6350947F8"
 ]
@@ -107,7 +107,7 @@ URIs: https://deb.debian.org/debian
 Suites: bookworm
 Components: main
 Architectures: amd64
-Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+Signed-By: /usr/share/keyrings/debian-archive-bookworm-stable.gpg
 ```
 
 ### System Mode (`/etc/dich/sources.toml`)
