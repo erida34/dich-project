@@ -12,7 +12,7 @@ struct DefaultSource {
     suite: &'static str,
     uri: &'static str,
     keyring: &'static str,
-    fingerprint: &'static str,
+    fingerprints: &'static [&'static str],
 }
 
 fn supported_default(id: &str, suite: &str, architecture: &str) -> Option<DefaultSource> {
@@ -24,29 +24,37 @@ fn supported_default(id: &str, suite: &str, architecture: &str) -> Option<Defaul
             distribution: "debian",
             suite: "bookworm",
             uri: "https://deb.debian.org/debian",
-            keyring: "/usr/share/keyrings/debian-archive-bookworm-stable.gpg",
-            fingerprint: "B8B80B5B623EAB6AD8775C45B7C5D7D6350947F8",
+            keyring: "/usr/share/keyrings/debian-archive-keyring.gpg",
+            fingerprints: &[
+                "B8B80B5B623EAB6AD8775C45B7C5D7D6350947F8",
+                "04B54C3CDCA79751B16BC6B5225629DF75B188BD",
+                "4D64FEC119C2029067D6E791F8D2585B8783D481",
+            ],
         }),
         ("debian", "trixie") => Some(DefaultSource {
             distribution: "debian",
             suite: "trixie",
             uri: "https://deb.debian.org/debian",
             keyring: "/usr/share/keyrings/debian-archive-keyring.pgp",
-            fingerprint: "04B54C3CDCA79751B16BC6B5225629DF75B188BD",
+            fingerprints: &[
+                "B8B80B5B623EAB6AD8775C45B7C5D7D6350947F8",
+                "04B54C3CDCA79751B16BC6B5225629DF75B188BD",
+                "41587F7DB8C774BCCF131416762F67A0B2C39DE4",
+            ],
         }),
         ("ubuntu", "jammy") => Some(DefaultSource {
             distribution: "ubuntu",
             suite: "jammy",
             uri: "https://archive.ubuntu.com/ubuntu",
             keyring: "/usr/share/keyrings/ubuntu-archive-keyring.gpg",
-            fingerprint: "F6ECB3762474EDA9D21B7022871920D1991BC93C",
+            fingerprints: &["F6ECB3762474EDA9D21B7022871920D1991BC93C"],
         }),
         ("ubuntu", "noble") => Some(DefaultSource {
             distribution: "ubuntu",
             suite: "noble",
             uri: "https://archive.ubuntu.com/ubuntu",
             keyring: "/usr/share/keyrings/ubuntu-archive-keyring.gpg",
-            fingerprint: "F6ECB3762474EDA9D21B7022871920D1991BC93C",
+            fingerprints: &["F6ECB3762474EDA9D21B7022871920D1991BC93C"],
         }),
         _ => None,
     }
@@ -77,14 +85,10 @@ fn config_contents(
     {
         return Err(unsupported());
     }
+    let fingerprints = source.fingerprints.join("\", \"");
     let toml = format!(
         "[[sources]]\ndistribution = \"{}\"\nsources_file = \"{}\"\nuri = \"{}\"\nsuite = \"{}\"\ncomponents = [\"main\"]\narchitecture = \"amd64\"\nkeyring = \"{}\"\nfingerprints = [\"{}\"]\n",
-        source.distribution,
-        source_file,
-        source.uri,
-        source.suite,
-        source.keyring,
-        source.fingerprint
+        source.distribution, source_file, source.uri, source.suite, source.keyring, fingerprints
     );
     let deb822 = format!(
         "Types: deb\nURIs: {}\nSuites: {}\nComponents: main\nArchitectures: amd64\nSigned-By: {}\n",
@@ -278,12 +282,12 @@ mod tests {
     }
 
     #[test]
-    fn debian_defaults_use_the_regular_keyring_file_not_the_symlink() {
+    fn debian_defaults_use_the_complete_regular_keyring_files() {
         assert_eq!(
             supported_default("debian", "bookworm", "amd64")
                 .unwrap()
                 .keyring,
-            "/usr/share/keyrings/debian-archive-bookworm-stable.gpg"
+            "/usr/share/keyrings/debian-archive-keyring.gpg"
         );
         assert_eq!(
             supported_default("debian", "trixie", "amd64")
@@ -294,11 +298,48 @@ mod tests {
     }
 
     #[test]
+    fn debian_defaults_pin_all_official_signers_for_current_inrelease_files() {
+        assert_eq!(
+            supported_default("debian", "bookworm", "amd64")
+                .unwrap()
+                .fingerprints,
+            &[
+                "B8B80B5B623EAB6AD8775C45B7C5D7D6350947F8",
+                "04B54C3CDCA79751B16BC6B5225629DF75B188BD",
+                "4D64FEC119C2029067D6E791F8D2585B8783D481",
+            ]
+        );
+        assert_eq!(
+            supported_default("debian", "trixie", "amd64")
+                .unwrap()
+                .fingerprints,
+            &[
+                "B8B80B5B623EAB6AD8775C45B7C5D7D6350947F8",
+                "04B54C3CDCA79751B16BC6B5225629DF75B188BD",
+                "41587F7DB8C774BCCF131416762F67A0B2C39DE4",
+            ]
+        );
+    }
+
+    #[test]
+    fn generated_debian_policy_keeps_each_signer_explicitly_pinned() {
+        for suite in ["bookworm", "trixie"] {
+            let source = supported_default("debian", suite, "amd64").unwrap();
+            let source_file = Path::new("/etc/dich/sources/official.sources");
+            let (toml, deb822) = config_contents(source, source_file).unwrap();
+            let configured = dich_apt::parse_source_config(&toml).unwrap();
+            let imported = dich_apt::import_sources(&deb822, configured[0].policy()).unwrap();
+            assert_eq!(imported[0].fingerprints(), source.fingerprints);
+            assert_eq!(imported[0].keyring(), source.keyring);
+        }
+    }
+
+    #[test]
     fn os_release_is_parsed_as_data_not_shell() {
         let parsed = detect_default("ID=ubuntu\nVERSION_CODENAME=noble\n", "amd64");
         assert_eq!(
-            parsed.unwrap().fingerprint,
-            "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+            parsed.unwrap().fingerprints,
+            &["F6ECB3762474EDA9D21B7022871920D1991BC93C"]
         );
         assert!(
             detect_default(

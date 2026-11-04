@@ -4,7 +4,7 @@ Default: true
 Description: Configure Dich to use this system's official archive?
  Dich can create a trusted source policy for the official Debian or Ubuntu
  archive when this system is Debian 12/13 or Ubuntu 22.04/24.04 on amd64.
- The installed distribution archive keyring and a pinned signing fingerprint
+ The installed distribution archive keyring and pinned signing fingerprints
  are required. No third-party source will be enabled.
  .
  If you answer no, Dich will install without a source configuration. You can

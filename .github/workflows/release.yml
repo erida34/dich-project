@@ -73,6 +73,11 @@ jobs:
               dich --lang ru --help | grep -F "Использование:"
               test -s /etc/dich/sources.toml
               dich sources list | grep -F configured
+              if grep -q "^ID=debian$" /etc/os-release; then
+                # Exercise the generated multi-signature trust policy in both Debian images.
+                # The broad window is confined to this smoke test; production defaults remain 24 hours.
+                dich --max-age-seconds 31536000 update
+              fi
               config_hash=$(sha256sum /etc/dich/sources.toml | cut -d" " -f1)
               for asset in \
                 /usr/share/man/man1/dich.1.gz \
