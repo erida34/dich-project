@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.5] - 2026-11-04
+## [0.7.6] - 2026-11-04
 
 ### Added
 - Debian package configuration prompt and `dich setup` for the pinned official Debian/Ubuntu archive defaults on supported amd64 releases. Noninteractive installs use the safe default; existing configuration is not overwritten.
@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Clarify that first-run source setup is available starting with version 0.7.4; version 0.7.3 does not include the setup command or installation prompt.
+- Use Debian's regular `.pgp` archive keyring file because the conventional `.gpg` path is a symlink that Dich correctly rejects.
 - Install Debian or Ubuntu archive keyrings in the corresponding release smoke-test containers before checking automatic source configuration.
 
 ## [0.7.3] - 2026-11-04
