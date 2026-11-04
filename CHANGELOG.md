@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.2] - 2026-11-04
+## [0.7.3] - 2026-11-04
 
 ### Added
 - Russian CLI help and command man pages, selectable with `--lang ru` or `DICH_LANG=ru`; mapped human-readable diagnostics are translated while JSON and normal command output retain their existing English contract.
 
 ### Fixed
-- Preserve Russian man pages during package installation on Debian and Ubuntu, and smoke-test the installed Russian help output.
+- Preserve Russian man pages and their parent directories during package installation on Debian and Ubuntu; smoke-test the installed Russian help output.
 
 ## [0.7.0] - 2026-11-04
 

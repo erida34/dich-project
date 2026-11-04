@@ -26,7 +26,7 @@ Use SemVer tags `vX.Y.Z`, update the matching changelog section, validate the ex
    - Cryptographic build provenance attestations generated via `actions/attest-build-provenance`.
 
 3. **Release Gate Verification**:
-   `.github/workflows/release.yml` builds the release package and executes containerized smoke tests in pinned Debian and Ubuntu base images, verifying installation, manual page indexing, vendor completions, reinstall and clean removal. The `v0.7.0` release run 41723471957 passed this matrix and published an experimental prerelease. The `v0.7.1` smoke test found Debian's default exclusion of localized man pages; `0.7.2` explicitly preserves and tests them. Do not distribute it until its release workflow passes.
+   `.github/workflows/release.yml` builds the release package and executes containerized smoke tests in pinned Debian and Ubuntu base images, verifying installation, manual page indexing, vendor completions, reinstall and clean removal. The `v0.7.0` release run 41723471957 passed this matrix and published an experimental prerelease. The `v0.7.1` and `v0.7.2` smoke runs exposed Debian's path filters for localized man pages and parent directories. Candidate `0.7.3` explicitly includes those paths; do not distribute it until its release workflow passes.
 
 
 ## Opt-in live fetch check

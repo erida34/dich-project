@@ -60,7 +60,7 @@ jobs:
             ubuntu@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852; do
             docker run --rm --platform linux/amd64 -v "$PWD:/work:ro" -e DICH_DEB="/work/${deb#./}" "$image" sh -c '
               set -eu
-              printf "path-include /usr/share/man/man1/dich*.1.gz\npath-include /usr/share/man/ru/man1/dich*.1.gz\npath-include /usr/share/doc/dich/licenses/*\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
+              printf "path-include /usr/share/man/man1/dich*.1.gz\npath-include /usr/share/man/ru/\npath-include /usr/share/man/ru/man1/\npath-include /usr/share/man/ru/man1/dich*.1.gz\npath-include /usr/share/doc/dich/licenses/*\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
               apt-get update -qq
               apt-get install -y -qq "$DICH_DEB"
               dich --help
