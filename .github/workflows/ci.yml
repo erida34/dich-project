@@ -60,10 +60,11 @@ jobs:
             echo "=== Smoke testing in $image ==="
             docker run --rm -v "$PWD:/work:ro" "$image" sh -c '
               set -eu
-              printf "path-include /usr/share/man/man1/dich*.1.gz\npath-include /usr/share/doc/dich/licenses/*\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
+              printf "path-include /usr/share/man/man1/dich*.1.gz\npath-include /usr/share/man/ru/man1/dich*.1.gz\npath-include /usr/share/doc/dich/licenses/*\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
               apt-get update -qq
               apt-get install -y -qq /work/'"$deb"'
               /usr/bin/dich --help
+              /usr/bin/dich --lang ru --help | grep -F "Использование:"
               for asset in \
                 /usr/share/man/man1/dich.1.gz \
                 /usr/share/man/ru/man1/dich.1.gz \
