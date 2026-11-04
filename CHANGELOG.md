@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-04
+
 ### Added
 - Russian CLI help and command man pages, selectable with `--lang ru` or `DICH_LANG=ru`; mapped human-readable diagnostics are translated while JSON and normal command output retain their existing English contract.
 

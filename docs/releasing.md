@@ -26,7 +26,7 @@ Use SemVer tags `vX.Y.Z`, update the matching changelog section, validate the ex
    - Cryptographic build provenance attestations generated via `actions/attest-build-provenance`.
 
 3. **Release Gate Verification**:
-   Before release publication, `.github/workflows/release.yml` builds the release package and executes containerized smoke tests in pinned Debian and Ubuntu base images, verifying installation, manual page indexing, vendor completions, reinstall and clean removal. Hosted CI run 41717128407 passed this smoke matrix for the current pre-version-bump commit. The release-tag workflow itself has not run and no GitHub Release assets are published.
+   `.github/workflows/release.yml` builds the release package and executes containerized smoke tests in pinned Debian and Ubuntu base images, verifying installation, manual page indexing, vendor completions, reinstall and clean removal. The `v0.7.0` release run 41723471957 passed this matrix and published an experimental prerelease. The Russian-localization `0.7.1` candidate has not yet been tagged or published; its release workflow must pass before update commands are shared as available.
 
 
 ## Opt-in live fetch check
