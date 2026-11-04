@@ -26,7 +26,7 @@ Use SemVer tags `vX.Y.Z`, update the matching changelog section, validate the ex
    - Cryptographic build provenance attestations generated via `actions/attest-build-provenance`.
 
 3. **Release Gate Verification**:
-   `.github/workflows/release.yml` builds the release package and executes containerized smoke tests in pinned Debian and Ubuntu base images, verifying installation, manual page indexing, vendor completions, reinstall and clean removal. The `v0.7.0` release run 41723471957 passed this matrix and published an experimental prerelease. The `v0.7.1` and `v0.7.2` smoke runs exposed Debian's path filters for localized man pages and parent directories. Candidate `0.7.3` explicitly includes those paths; do not distribute it until its release workflow passes.
+   `.github/workflows/release.yml` builds the release package and executes containerized smoke tests in pinned Debian and Ubuntu base images, verifying installation, manual page indexing, Russian CLI output, vendor completions, reinstall and clean removal. The `v0.7.0` run 41723471957 and `v0.7.3` run 41783499470 passed this matrix; `v0.7.3` is published as an experimental prerelease. Runs for `v0.7.1` and `v0.7.2` caught and fixed Debian's dpkg path filters for localized man pages. The `v0.7.3` package SHA-256 is `b90b44e665716a0e48427deb167fbe9e277cd295a939b71ae57ed9333ee41473`; the downloaded `.deb` and SBOM both passed `sha256sum -c`. This tag is annotated but unsigned, and package GPG signing is not claimed; production release gates remain open.
 
 
 ## Opt-in live fetch check
