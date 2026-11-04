@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Debian package configuration prompt and `dich setup` for the pinned official Debian/Ubuntu archive defaults on supported amd64 releases. Noninteractive installs use the safe default; existing configuration is not overwritten.
+- A 24-hour default Release freshness window, so ordinary `dich update` needs no policy flags; signed `Valid-Until` is still enforced when present (ADR 0042).
+
 ## [0.7.3] - 2026-11-04
 
 ### Added

@@ -31,7 +31,7 @@ Use SemVer tags `vX.Y.Z`, update the matching changelog section, validate the ex
 
 ## Opt-in live fetch check
 
-On a network-capable Linux test target, set `DICH_LIVE_CONFIG` to an explicit trusted single-source policy, `DICH_LIVE_CACHE` to a new private directory, `DICH_LIVE_MAX_AGE` to the chosen maximum Release age in seconds, and `DICH_LIVE_PACKAGE`, `DICH_LIVE_VERSION`, `DICH_LIVE_COMPONENT` to an exact indexed artifact. Populate the dedicated cache with `dich --config "$DICH_LIVE_CONFIG" --cache "$DICH_LIVE_CACHE" --max-age-seconds "$DICH_LIVE_MAX_AGE" update`. If the repository lacks Valid-Until, add `--allow-missing-valid-until` to update and explicitly set `DICH_LIVE_ALLOW_MISSING_VALID_UNTIL=1` for the test. Then run:
+On a network-capable Linux test target, set `DICH_LIVE_CONFIG` to an explicit trusted single-source policy, `DICH_LIVE_CACHE` to a new private directory, and `DICH_LIVE_PACKAGE`, `DICH_LIVE_VERSION`, `DICH_LIVE_COMPONENT` to an exact indexed artifact. The CLI freshness default is 24 hours. Populate the dedicated cache with `dich --config "$DICH_LIVE_CONFIG" --cache "$DICH_LIVE_CACHE" update`; pass `--max-age-seconds "$DICH_LIVE_MAX_AGE"` before `update` only when testing an override. A repository without `Valid-Until` remains bounded by the 24-hour signed `Date`; add `--require-valid-until` to opt into rejecting that metadata. Then run:
 
 ```sh
 cargo test -p dich-cli --test fetch_cli live_exact_fetch_downloads_signed_artifact -- --ignored --exact

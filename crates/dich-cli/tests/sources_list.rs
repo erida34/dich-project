@@ -1145,6 +1145,7 @@ fn lists_configured_sources_and_reports_json_errors() {
     }
     let update = Command::new(env!("CARGO_BIN_EXE_dich"))
         .args([
+            "--offline",
             "--json",
             "--config",
             config.to_str().unwrap(),
@@ -1156,7 +1157,7 @@ fn lists_configured_sources_and_reports_json_errors() {
         .unwrap();
     assert!(!update.status.success());
     let error: serde_json::Value = serde_json::from_slice(&update.stderr).unwrap();
-    assert_eq!(error["error"]["code"], "freshness_policy_required");
+    assert_eq!(error["error"]["code"], "offline_mode");
     let query = Command::new(env!("CARGO_BIN_EXE_dich"))
         .args([
             "--json",

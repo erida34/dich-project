@@ -8,3 +8,4 @@
 - Transaction journal and recovery model; SQLite durability and filesystem synchronization.
 - Privilege boundary; user stores vs managed system store.
 - Release owner, supported Debian/Ubuntu suites, stable release repository and signing process.
+- Whether the supported official-source defaults should be expanded beyond Debian 12/13 and Ubuntu 22.04/24.04 amd64; additions require independently verified key fingerprints and package smoke coverage.

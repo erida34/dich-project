@@ -62,9 +62,12 @@ jobs:
               set -eu
               printf "path-include /usr/share/man/man1/dich*.1.gz\npath-include /usr/share/man/ru/\npath-include /usr/share/man/ru/man1/\npath-include /usr/share/man/ru/man1/dich*.1.gz\npath-include /usr/share/doc/dich/licenses/*\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
               apt-get update -qq
-              apt-get install -y -qq /work/'"$deb"'
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /work/'"$deb"'
               /usr/bin/dich --help
               /usr/bin/dich --lang ru --help | grep -F "Использование:"
+              test -s /etc/dich/sources.toml
+              /usr/bin/dich sources list | grep -F configured
+              config_hash=$(sha256sum /etc/dich/sources.toml | cut -d" " -f1)
               for asset in \
                 /usr/share/man/man1/dich.1.gz \
                 /usr/share/man/ru/man1/dich.1.gz \
@@ -75,10 +78,12 @@ jobs:
                 test -f "$asset" || { echo "Missing installed package asset: $asset"; dpkg-query -L dich; exit 1; }
               done
               # Upgrade/reinstall test
-              apt-get install --reinstall -y -qq /work/'"$deb"'
+              DEBIAN_FRONTEND=noninteractive apt-get install --reinstall -y -qq /work/'"$deb"'
+              test "$config_hash" = "$(sha256sum /etc/dich/sources.toml | cut -d" " -f1)"
               /usr/bin/dich --version
               # Removal test
               apt-get remove -y -qq dich
               test ! -f /usr/bin/dich
+              test -s /etc/dich/sources.toml
             '
           done

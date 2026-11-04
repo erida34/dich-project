@@ -80,3 +80,5 @@ This checklist is a delivery plan, not a claim that features exist. Each phase r
 - [x] Man pages and completions match CLI; `.deb` installs and removes cleanly on declared platforms (ADR 0038, CI deb-smoke). Hosted run 41717128407 verified package install, CLI help, man/completions, reinstall and removal in Debian Bookworm/Trixie and Ubuntu 22.04/24.04.
 - [x] CI green, checksums published, changelog/support policy maintained (ADR 0037, ADR 0038). Master CI run 41722390578 and release run 41723471957 passed; release assets include `SHA256SUMS`, and the workflow verified it with `sha256sum -c` before publication.
 - [ ] Production release tag and workflow protection: signed tag verified by CI, protected release branch and reviewer gate. Active GitHub ruleset `Protect version tags` (ID 26488874) restricts version-tag create/update/delete to the repository owner, who can bypass it; no GPG signing key or automated tag-signature verification is configured.
+
+Install-time source configuration and default freshness are tracked separately from the release gates (ADRs 0041 and 0042); they do not close external beta or signed production release criteria.

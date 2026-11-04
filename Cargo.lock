@@ -202,7 +202,7 @@ dependencies = [
 
 [[package]]
 name = "dich-apt"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "chrono",
  "dich-core",
@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "dich-cli"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "ar",
  "clap",
@@ -240,11 +240,11 @@ dependencies = [
 
 [[package]]
 name = "dich-core"
-version = "0.7.3"
+version = "0.7.4"
 
 [[package]]
 name = "dich-deb"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "ar",
  "dich-apt",
@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "dich-elf"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "goblin",
  "serde",
@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "dich-engine"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "dich-apt",
  "dich-core",
@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "dich-store"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "dich-apt",
  "dich-core",

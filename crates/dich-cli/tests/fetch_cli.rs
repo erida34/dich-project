@@ -7,7 +7,7 @@ fn run(args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 #[test]
-fn fetch_requires_explicit_identity_and_freshness_and_fails_closed() {
+fn fetch_requires_identity_and_uses_default_freshness_policy() {
     for args in [
         &["--json", "fetch", "sample"][..],
         &["--json", "fetch", "sample", "--exact-version", "1"][..],
@@ -25,10 +25,12 @@ fn fetch_requires_explicit_identity_and_freshness_and_fails_closed() {
         "1",
         "--component",
         "main",
+        "--config",
+        "/no/such/config",
     ]);
     assert!(!out.status.success());
     let error: serde_json::Value = serde_json::from_slice(&out.stderr).unwrap();
-    assert_eq!(error["error"]["code"], "freshness_policy_required");
+    assert_eq!(error["error"]["code"], "source_load_failed");
     assert!(out.stdout.is_empty());
     let out = run(&[
         "--json",

@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+. /usr/share/debconf/confmodule
+
+# Noninteractive installations retain the template's safe default: configure
+# only the detected, explicitly supported official archive.
+db_input medium dich/configure-official-source || true
+db_go || true
+db_stop
+
+exit 0

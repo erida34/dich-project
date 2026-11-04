@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 pub mod i18n;
 pub mod paths;
+mod setup;
 pub use i18n::Language;
 pub use paths::ResolvedPaths;
 
@@ -44,12 +45,15 @@ pub struct Cli {
     /// Explicit HTTP CONNECT proxy URL (no credentials; TLS validation remains enabled)
     #[arg(long, global = true)]
     pub https_proxy: Option<String>,
-    /// Explicit maximum age for signed Release metadata, in seconds
-    #[arg(long, global = true)]
-    pub max_age_seconds: Option<u64>,
-    /// Permit missing Valid-Until while still enforcing maximum age
+    /// Maximum age for signed Release metadata, in seconds (default: 86400)
+    #[arg(long, global = true, default_value_t = 86400)]
+    pub max_age_seconds: u64,
+    /// Permit missing Valid-Until while still enforcing the maximum age (legacy alias)
     #[arg(long, global = true)]
     pub allow_missing_valid_until: bool,
+    /// Require every signed Release file to contain Valid-Until
+    #[arg(long, global = true, conflicts_with = "allow_missing_valid_until")]
+    pub require_valid_until: bool,
     /// Emit versioned JSON output and errors
     #[arg(long, global = true)]
     pub json: bool,
@@ -186,6 +190,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: SourcesCommands,
     },
+    /// Create a trusted default source configuration for this system
+    Setup,
     /// Garbage collect unreachable objects
     Gc {
         /// Report unreachable objects and reclaimable disk space without making any changes (default)
@@ -433,6 +439,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         );
     }
     match cli.command {
+        Commands::Setup => setup::configure_defaults(&paths),
         Commands::Plan {
             package,
             distribution,
@@ -441,15 +448,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             #[cfg(target_os = "linux")]
             {
-                let age = cli.max_age_seconds.ok_or(CliError {
-                    code: "freshness_policy_required",
-                    message: "specify --max-age-seconds explicitly",
-                    trace: Vec::new(),
-                })?;
                 let freshness = dich_apt::FreshnessPolicy::new(
-                    std::time::Duration::from_secs(age),
+                    std::time::Duration::from_secs(cli.max_age_seconds),
                     std::time::Duration::from_secs(300),
-                    !cli.allow_missing_valid_until,
+                    cli.require_valid_until && !cli.allow_missing_valid_until,
                 )
                 .map_err(|_| CliError {
                     code: "invalid_freshness_policy",
@@ -570,15 +572,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         command @ (Commands::Search { .. } | Commands::Show { .. } | Commands::Versions { .. }) => {
             #[cfg(target_os = "linux")]
             {
-                let age = cli.max_age_seconds.ok_or(CliError {
-                    code: "freshness_policy_required",
-                    message: "specify --max-age-seconds explicitly",
-                    trace: Vec::new(),
-                })?;
                 let freshness = dich_apt::FreshnessPolicy::new(
-                    std::time::Duration::from_secs(age),
+                    std::time::Duration::from_secs(cli.max_age_seconds),
                     std::time::Duration::from_secs(300),
-                    !cli.allow_missing_valid_until,
+                    cli.require_valid_until && !cli.allow_missing_valid_until,
                 )
                 .map_err(|_| CliError {
                     code: "invalid_freshness_policy",
@@ -675,15 +672,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         message: "proxy must be an unauthenticated http://host:port URL",
                         trace: Vec::new(),
                     })?;
-                let age = cli.max_age_seconds.ok_or(CliError {
-                    code: "freshness_policy_required",
-                    message: "specify --max-age-seconds explicitly",
-                    trace: Vec::new(),
-                })?;
                 let freshness = dich_apt::FreshnessPolicy::new(
-                    std::time::Duration::from_secs(age),
+                    std::time::Duration::from_secs(cli.max_age_seconds),
                     std::time::Duration::from_secs(300),
-                    !cli.allow_missing_valid_until,
+                    cli.require_valid_until && !cli.allow_missing_valid_until,
                 )
                 .map_err(|_| CliError {
                     code: "invalid_freshness_policy",
@@ -787,15 +779,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                         message: "proxy must be an unauthenticated http://host:port URL",
                         trace: Vec::new(),
                     })?;
-                let age = cli.max_age_seconds.ok_or(CliError {
-                    code: "freshness_policy_required",
-                    message: "specify --max-age-seconds explicitly",
-                    trace: Vec::new(),
-                })?;
                 let freshness = dich_apt::FreshnessPolicy::new(
-                    std::time::Duration::from_secs(age),
+                    std::time::Duration::from_secs(cli.max_age_seconds),
                     std::time::Duration::from_secs(300),
-                    !cli.allow_missing_valid_until,
+                    cli.require_valid_until && !cli.allow_missing_valid_until,
                 )
                 .map_err(|_| CliError {
                     code: "invalid_freshness_policy",
@@ -962,13 +949,11 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     paths::ensure_private_directory(&paths.cache)?;
                     paths::ensure_private_directory(&paths.store_dir)?;
                 }
-                let age = cli.max_age_seconds.ok_or(CliError {
-                    code: "freshness_policy_required",
-                    message: "specify --max-age-seconds explicitly",
-                    trace: Vec::new(),
-                })?;
-                let freshness = dich_engine::freshness_policy(age, cli.allow_missing_valid_until)
-                    .map_err(|_| CliError {
+                let freshness = dich_engine::freshness_policy(
+                    cli.max_age_seconds,
+                    !cli.require_valid_until || cli.allow_missing_valid_until,
+                )
+                .map_err(|_| CliError {
                     code: "invalid_freshness_policy",
                     message: "invalid metadata freshness policy",
                     trace: Vec::new(),
@@ -1893,6 +1878,16 @@ mod tests {
     #[test]
     fn verify_cli_definition() {
         Cli::command().debug_assert();
+    }
+    #[test]
+    fn freshness_policy_has_a_safe_usable_default() {
+        let cli = Cli::try_parse_from(["dich", "update"]).expect("parse default update");
+        assert_eq!(cli.max_age_seconds, 86400);
+        assert!(!cli.require_valid_until);
+
+        let strict = Cli::try_parse_from(["dich", "--require-valid-until", "update"])
+            .expect("parse strict freshness option");
+        assert!(strict.require_valid_until);
     }
     #[test]
     fn no_package_operations() {

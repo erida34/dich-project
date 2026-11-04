@@ -62,9 +62,12 @@ jobs:
               set -eu
               printf "path-include /usr/share/man/man1/dich*.1.gz\npath-include /usr/share/man/ru/\npath-include /usr/share/man/ru/man1/\npath-include /usr/share/man/ru/man1/dich*.1.gz\npath-include /usr/share/doc/dich/licenses/*\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
               apt-get update -qq
-              apt-get install -y -qq "$DICH_DEB"
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$DICH_DEB"
               dich --help
               dich --lang ru --help | grep -F "Использование:"
+              test -s /etc/dich/sources.toml
+              dich sources list | grep -F configured
+              config_hash=$(sha256sum /etc/dich/sources.toml | cut -d" " -f1)
               for asset in \
                 /usr/share/man/man1/dich.1.gz \
                 /usr/share/man/ru/man1/dich.1.gz \
@@ -74,10 +77,12 @@ jobs:
                 /usr/share/doc/dich/licenses/CDLA-Permissive-2.0.txt; do
                 test -f "$asset" || { echo "Missing installed package asset: $asset"; dpkg-query -L dich; exit 1; }
               done
-              apt-get install --reinstall -y -qq "$DICH_DEB"
+              DEBIAN_FRONTEND=noninteractive apt-get install --reinstall -y -qq "$DICH_DEB"
+              test "$config_hash" = "$(sha256sum /etc/dich/sources.toml | cut -d" " -f1)"
               dich --version
               apt-get remove -y -qq dich
               test ! -e /usr/bin/dich
+              test -s /etc/dich/sources.toml
             '
           done
       - name: Prepare artifacts

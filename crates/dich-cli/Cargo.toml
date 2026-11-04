@@ -54,7 +54,8 @@ name = "dich"
 maintainer = "Dich Maintainers"
 section = "admin"
 priority = "optional"
-depends = "$auto, gpgv, util-linux, gzip, xz-utils, zstd"
+depends = "$auto, debconf, gpgv, util-linux, gzip, xz-utils, zstd"
+maintainer-scripts = "../../packaging/maintainer-scripts"
 extended-description = "Experimental versioned package store using verified Debian/Ubuntu APT repositories. Profile installation is restricted to authenticated x86-64 glibc shared-object closures; package code is not executed and host loader state is not modified."
 assets = [
   ["target/release/dich", "usr/bin/", "755"],

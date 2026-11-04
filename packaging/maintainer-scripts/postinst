@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        . /usr/share/debconf/confmodule
+        db_get dich/configure-official-source
+        if [ "$RET" = true ]; then
+            if ! /usr/bin/dich --system setup; then
+                echo "dich: default source setup was skipped; configure it later with 'dich setup'" >&2
+            fi
+        fi
+        db_stop
+        ;;
+esac
+
+exit 0

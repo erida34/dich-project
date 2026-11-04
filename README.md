@@ -43,11 +43,12 @@ Dich verifies packages against explicit glibc and native architecture baselines 
 ## Installation
 
 ### From Debian Package (`.deb`)
-Download the release artifact `dich_<upstream-version>-<debian-revision>_amd64.deb` from GitHub Releases (for example, `dich_0.7.0-1_amd64.deb`):
+Download the release artifact `dich_<upstream-version>-<debian-revision>_amd64.deb` from GitHub Releases (for example, `dich_0.7.3-1_amd64.deb`):
 ```sh
 sudo dpkg -i dich_<upstream-version>-<debian-revision>_amd64.deb
 ```
 This installs the `dich` binary to `/usr/bin/dich`, documentation to `/usr/share/man/man1/dich.1.gz`, and shell completions for Bash, Zsh, and Fish.
+During installation, Debian's configuration dialog offers to enable the official archive for supported Debian 12/13 or Ubuntu 22.04/24.04 amd64 systems. The default answer creates a signed-source policy using the system archive keyring and a pinned signing fingerprint. Noninteractive installs use that same default. Answering no leaves sources unconfigured; unsupported systems also install without a source. Existing configuration is never overwritten.
 
 ### From Source
 Ensure Rust 1.85+ is installed:
@@ -75,7 +76,13 @@ rm -rf ~/.local/share/dich ~/.cache/dich ~/.config/dich
 
 ## Configuration
 
-Dich relies on explicit source policy files defining trusted APT repositories and their OpenPGP keyrings.
+Dich relies on explicit source policy files defining trusted APT repositories and their OpenPGP keyrings. To create the supported official default later (or after answering no during installation), run:
+
+```sh
+sudo dich setup
+```
+
+The command writes `/etc/dich/sources.toml` and `/etc/dich/sources/official.sources` without replacing existing files. It supports only Debian 12/13 and Ubuntu 22.04/24.04 on amd64. It does not import arbitrary host APT repositories. On unsupported distributions, configure a source manually using the policy below.
 
 ### Rootless Mode (User Configuration)
 Create `~/.config/dich/sources.toml`:
@@ -89,7 +96,7 @@ components = ["main"]
 architecture = "amd64"
 keyring = "/usr/share/keyrings/debian-archive-keyring.gpg"
 fingerprints = [
-    "B42F2F2309C104E9833606C7A87A134DE3532297"
+    "B8B80B5B623EAB6AD8775C45B7C5D7D6350947F8"
 ]
 ```
 
@@ -115,6 +122,7 @@ Fetch and cryptographically authenticate `InRelease` and package indices:
 ```sh
 dich update
 ```
+Release metadata is limited to 24 hours by default. A signed `Valid-Until` is enforced when present; repositories without that field use the same 24-hour signed-date limit. Use `--require-valid-until` for stricter policy, or override the age with `--max-age-seconds`.
 For explicit offline environments:
 ```sh
 dich --offline search openssl
