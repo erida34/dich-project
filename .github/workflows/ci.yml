@@ -49,6 +49,7 @@ jobs:
           dpkg-deb --info "$deb"
           dpkg-deb --contents "$deb" | grep -F '/usr/bin/dich'
           dpkg-deb --contents "$deb" | grep -F '/usr/share/man/man1/dich.1.gz'
+          dpkg-deb --contents "$deb" | grep -F '/usr/share/man/ru/man1/dich.1.gz'
           dpkg-deb --contents "$deb" | grep -F '/usr/share/bash-completion/completions/dich'
           dpkg-deb --contents "$deb" | grep -F '/usr/share/zsh/vendor-completions/_dich'
           dpkg-deb --contents "$deb" | grep -F '/usr/share/fish/vendor_completions.d/dich.fish'
@@ -65,6 +66,7 @@ jobs:
               /usr/bin/dich --help
               for asset in \
                 /usr/share/man/man1/dich.1.gz \
+                /usr/share/man/ru/man1/dich.1.gz \
                 /usr/share/bash-completion/completions/dich \
                 /usr/share/zsh/vendor-completions/_dich \
                 /usr/share/fish/vendor_completions.d/dich.fish \

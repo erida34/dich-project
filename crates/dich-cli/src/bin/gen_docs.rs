@@ -1,4 +1,3 @@
-use clap::CommandFactory;
 use std::{env, fs, io, path::PathBuf};
 
 fn main() -> io::Result<()> {
@@ -8,11 +7,15 @@ fn main() -> io::Result<()> {
             .unwrap_or_else(|| "packaging/generated".into()),
     );
     let man_dir = base.join("man");
+    let russian_man_dir = man_dir.join("ru");
     let completions_dir = base.join("completions");
     fs::create_dir_all(&man_dir)?;
+    fs::create_dir_all(&russian_man_dir)?;
     fs::create_dir_all(&completions_dir)?;
-    let cmd = dich_cli::Cli::command();
+    let cmd = dich_cli::Cli::command_for_language(dich_cli::Language::English);
     clap_mangen::generate_to(cmd.clone(), &man_dir)?;
+    let russian_cmd = dich_cli::Cli::command_for_language(dich_cli::Language::Russian);
+    clap_mangen::generate_to(russian_cmd, &russian_man_dir)?;
     for (shell, filename) in [
         (clap_complete::Shell::Bash, "dich.bash"),
         (clap_complete::Shell::Zsh, "_dich"),

@@ -9,6 +9,6 @@ version = "0.7.0"
 rust-version = "1.85"
 
 [workspace.dependencies]
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 clap_mangen = "0.3"
 clap_complete = "4.5"

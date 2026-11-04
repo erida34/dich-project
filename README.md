@@ -10,6 +10,10 @@ Dich strictly adheres to the principle of **host non-interference**: it never in
 
 ## Key Features
 
+- **Russian CLI help**: Use `dich --lang ru --help` or set `DICH_LANG=ru`; English remains the default. Russian man pages are installed under `/usr/share/man/ru/man1/`.
+
+Russian help is available for commands too, for example `dich fetch --lang ru --help`. Set `DICH_LANG=ru` to make Russian the default for the current shell. At this stage, help, generated man pages, and mapped human-readable diagnostics are translated; successful command output, structured logs, JSON, and shell completions remain English.
+
 - **Original APT Repositories**: Directly sources official upstream Debian and Ubuntu mirrors using cryptographic OpenPGP signature verification (`InRelease`, `Release.gpg`), digest validation, and rollback protection.
 - **Content-Addressed Store**: Deduplicates shared libraries and files across package versions in read-only (`0400`) storage.
 - **Authenticated DSO Profiles**: Selects narrowly supported x86-64 glibc DSO closures into versioned profiles and returns explicit library paths. Dich does not execute package code; the `dlmopen` fixture demonstrates symbol-namespace isolation only, not a process sandbox.

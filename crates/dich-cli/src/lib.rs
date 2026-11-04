@@ -1,14 +1,25 @@
 #![forbid(unsafe_code)]
 //! Dich command-line interface; package orchestration lives in `dich-engine`.
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Command, CommandFactory, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+pub mod i18n;
 pub mod paths;
+pub use i18n::Language;
 pub use paths::ResolvedPaths;
 
 #[derive(Debug, Parser)]
 #[command(name = "dich", about = "Versioned package store using Debian/Ubuntu sources (experimental)", version, long_about = None)]
 pub struct Cli {
+    /// Interface language for help and human-readable errors
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value = "en",
+        env = "DICH_LANG"
+    )]
+    pub lang: Language,
     /// Path to trusted source policy [default: /etc/dich/sources.toml or $XDG_CONFIG_HOME/dich/sources.toml]
     #[arg(long, global = true)]
     pub config: Option<PathBuf>,
@@ -53,6 +64,10 @@ pub struct Cli {
 }
 
 impl Cli {
+    pub fn command_for_language(language: Language) -> Command {
+        i18n::localize_command(Self::command(), language)
+    }
+
     pub fn effective_log_level(&self) -> LogLevel {
         if self.log_level != LogLevel::Off {
             return self.log_level;
@@ -284,7 +299,16 @@ impl CliError {
     }
 
     pub fn render(&self, json: bool) -> String {
-        let redacted_message = dich_core::redact_sensitive(self.message);
+        self.render_for(json, Language::English)
+    }
+
+    pub fn render_for(&self, json: bool, language: Language) -> String {
+        let message = if json || language == Language::English {
+            self.message
+        } else {
+            i18n::error_message_ru(self.code).unwrap_or(self.message)
+        };
+        let redacted_message = dich_core::redact_sensitive(message);
         let redacted_trace: Vec<String> = self
             .trace
             .iter()
@@ -307,13 +331,23 @@ impl CliError {
             })
             .to_string()
         } else {
-            let mut output = format!("dich: error: {redacted_message}");
+            let (prefix, hint_label) = if language == Language::Russian {
+                ("dich: ошибка:", "подсказка")
+            } else {
+                ("dich: error:", "hint")
+            };
+            let mut output = format!("{prefix} {redacted_message}");
             if !redacted_trace.is_empty() {
                 output.push('\n');
                 output.push_str(&redacted_trace.join("\n"));
             }
-            if let Some(hint) = self.hint() {
-                output.push_str(&format!("\nhint: {hint}"));
+            let hint = if language == Language::Russian {
+                i18n::error_hint_ru(self.code)
+            } else {
+                self.hint()
+            };
+            if let Some(hint) = hint {
+                output.push_str(&format!("\n{hint_label}: {hint}"));
             }
             output
         }
@@ -1856,7 +1890,6 @@ fn map_install_error(error: dich_engine::EngineError) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
     #[test]
     fn verify_cli_definition() {
         Cli::command().debug_assert();

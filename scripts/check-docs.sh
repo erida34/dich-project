@@ -4,6 +4,8 @@ out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 cargo run --quiet -p dich-cli --bin dich-gen-docs -- "$out"
 test -s "$out/man/dich.1"
+test -s "$out/man/ru/dich.1"
+grep -Fq 'Использование:' "$out/man/ru/dich.1"
 test -s "$out/completions/dich.bash"
 test -s "$out/completions/_dich"
 test -s "$out/completions/dich.fish"
@@ -15,6 +17,9 @@ for command in update search show versions plan fetch inspect install remove rol
 done
 for page in dich-store-ls dich-store-verify dich-profile-list dich-sources-list; do
     test -s "$out/man/$page.1"
+done
+for page in dich-update dich-fetch dich-install dich-store-verify dich-profile-list dich-sources-list; do
+    test -s "$out/man/ru/$page.1"
 done
 grep -Fq 'EXACT_VERSION' "$out/man/dich-fetch.1"
 grep -Fq 'COMPONENT' "$out/man/dich-fetch.1"

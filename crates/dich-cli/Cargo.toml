@@ -59,6 +59,7 @@ extended-description = "Experimental versioned package store using verified Debi
 assets = [
   ["target/release/dich", "usr/bin/", "755"],
   ["../../packaging/generated/man/*.1", "usr/share/man/man1/", "644"],
+  ["../../packaging/generated/man/ru/*.1", "usr/share/man/ru/man1/", "644"],
   ["../../packaging/generated/completions/dich.bash", "usr/share/bash-completion/completions/dich", "644"],
   ["../../packaging/generated/completions/_dich", "usr/share/zsh/vendor-completions/", "644"],
   ["../../packaging/generated/completions/dich.fish", "usr/share/fish/vendor_completions.d/", "644"],
