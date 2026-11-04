@@ -2,6 +2,8 @@
 
 This document outlines the operational policies for external beta testing, bug triage and compatibility limits. The current internal threat review is in [`../dich-project-threat-model.md`](../dich-project-threat-model.md); no external tester results are claimed.
 
+> **Experimental release:** [v0.7.0](https://github.com/erida34/dich-project/releases/tag/v0.7.0) is an unsigned prerelease. The published `SHA256SUMS` helps detect transfer corruption but is not an independent signature of the release. Test only in a disposable VM or user store. Do not rely on Dich for production workloads or load stored package code from an untrusted publisher.
+
 ---
 
 ## 1. External Beta Testing Program
@@ -9,32 +11,38 @@ This document outlines the operational policies for external beta testing, bug t
 Dich is designed for security-conscious Linux environments, reproducible developer tooling, and unprivileged containerized applications requiring versioned packages from signed Debian and Ubuntu repositories.
 
 ### 1.1 Target Testing Scenarios
-External beta testers are encouraged to exercise Dich against the following scenarios:
-1. **Rootless User Store Operations**: Running `dich` entirely under unprivileged user accounts with store directories in `~/.local/share/dich` or custom paths, without `sudo` or host `apt` interaction.
-2. **Profile Generation & Atomic Rollback**: Creating multiple generations of application profiles, installing shared library closures, switching between versions, rolling back, and verifying runtime behavior via `dlmopen` or dynamic loaders.
-3. **Multi-Source Configuration & Suite Snapshots**: Configuring multiple repository mirrors, testing snapshot pinning, and verifying fail-closed behavior against expired repositories or key rotations.
-4. **Garbage Collection Safety**: Exercising mark-and-sweep GC under active profiles, testing disk space reclamation, and validating that referenced shared objects are never deleted.
-5. **Concurrent Operations & Crash Resilience**: Executing concurrent `dich` invocations against a single store, testing lock contention handling, and verifying database integrity after simulated abrupt process termination.
+External beta testers should use a disposable Linux amd64/glibc VM or an unprivileged test account and may exercise:
+1. **Authenticated repository metadata**: `update`, search and exact-version planning against one explicitly configured signed Debian or Ubuntu source. Record distro, suite and configured signer fingerprint; never disable signature, TLS or freshness checks to make a test pass.
+2. **Supported DSO package selection**: On a disposable store, install an exact package only if it passes the documented single-root DSO closure policy in ADRs 0025, 0027 and 0029. The supported result is path selection, not a sandbox or executable package installation. Do not load a selected library unless you trust its publisher; loaded code runs with the caller's privileges.
+3. **Fail-closed compatibility reports**: Inspect local fixtures and report whether scripts, services, triggers, non-DSO files, cross-source dependencies or mixed suites are rejected or marked for review. Dich must not execute maintainer scripts.
+4. **Profile generations and rollback**: Exercise one requested root package and its dependency closure per profile, on disposable data. Multi-root composition, cross-source resolution and general ELF activation remain unsupported.
+5. **Store verification and garbage collection**: Start with `dich gc` dry-run. Use `--execute` only against a disposable store after checking the report; preserve test fixtures and backups.
+6. **Concurrency and process interruption**: Use disposable stores only. The project has process-level failure-injection coverage, but that does not prove physical power-loss durability; do not test by abruptly powering off a machine with valuable data.
+
+The release `.deb` install smoke tests cover Debian 12/13 and Ubuntu 22.04/24.04 on amd64. That matrix validates Dich's own package installation, not compatibility of every upstream `.deb` with Dich's store.
 
 ### 1.2 Feedback & Bug Reporting Guidelines
-Beta testers reporting issues must provide:
-- **Environment Context**: Linux distribution and version (`cat /etc/os-release`), kernel version (`uname -r`), CPU architecture (`uname -m`), and filesystem type (`stat -f -c %T .`).
-- **Exact Dich Version & Command**: `dich --version`, the full command line executed, and whether `--json` was supplied.
-- **Reproducible Test Case**: A minimal repository policy (`sources.toml` or `sources.list.d/*.sources`), target package names, and full stderr output.
-- **Diagnostics Output**: Any error codes and diagnostic hints reported in structured JSON format.
+Beta testers reporting issues should provide:
+- **Environment**: Linux distribution/version (`cat /etc/os-release`), kernel (`uname -r`), architecture (`uname -m`), and filesystem (`stat -f -c %T .`).
+- **Exact Dich build and command**: `dich --version`, full command (redact secrets), exit code, and whether `--json` was enabled.
+- **Repository/package context**: Debian/Ubuntu distribution, suite, architecture, package and exact version. Include only the minimum source-policy fields needed to reproduce the issue; never attach private keyrings, credentials, tokens or an entire home directory.
+- **Reproduction and output**: Minimal steps, expected and actual behavior, relevant stderr/JSON diagnostics, and whether the issue reproduces with a fresh disposable store.
+- **Artifact identity when relevant**: Release tag, `.deb` filename and SHA-256. A checksum is an integrity hint, not proof of publisher identity.
 
 ---
 
-## 2. Issue Triage Taxonomy and SLAs
+## 2. Issue Triage Taxonomy
+
+These priorities guide maintainer triage; they are not response-time or resolution guarantees. Reports may take longer to acknowledge or resolve, especially during the experimental beta.
 
 To maintain high software reliability and security posture, reported issues are classified into four severity tiers:
 
-| Severity | Definition | Response Target | Resolution Target |
-| :--- | :--- | :--- | :--- |
-| **P0 - Critical Security** | Trust boundary violation, GPG signature bypass, host filesystem tampering outside store, arbitrary command execution, archive path escape. | < 12 hours | < 48 hours via security patch release |
-| **P1 - Data Corruption / Hang** | Database corruption (`metadata.sqlite3`), profile generation inconsistency, GC unlinking referenced objects, unrecoverable deadlock. | < 24 hours | Next minor/patch release |
-| **P2 - Resolver / Compatibility** | False positive rejection in the supported DSO subset, resolver backtracking failure, unexpected parsing error on valid deb822/control metadata. | < 3 days | Planned sprint cycle |
-| **P3 - Minor / UX / Docs** | Cosmetic CLI output issue, documentation clarification, non-blocking warning message, shell completion edge case. | < 7 days | Standard backlog |
+| Priority | Definition | Triage handling |
+| :--- | :--- | :--- |
+| **P0 - Critical Security** | Trust boundary violation, GPG signature bypass, host filesystem tampering outside store, arbitrary command execution, archive path escape. | Keep details private through GitHub Security Advisories; maintainers assess impact and coordinate disclosure. |
+| **P1 - Data Corruption / Hang** | Database corruption (`metadata.sqlite3`), profile generation inconsistency, GC unlinking referenced objects, unrecoverable deadlock. | Preserve evidence and a copy of the disposable test store; prioritize reproduction and data-safety assessment. |
+| **P2 - Resolver / Compatibility** | Incorrect result in the supported DSO subset, resolver failure, unexpected parsing error on valid deb822/control metadata. | Confirm the exact supported scope and minimize the reproducer. |
+| **P3 - Minor / UX / Docs** | Cosmetic CLI output issue, documentation clarification, non-blocking warning message, shell completion edge case. | Track as a normal improvement. |
 
 ### 2.1 Security Vulnerability Handling
 Security vulnerabilities must **not** be reported through public GitHub issues. GitHub private vulnerability reporting is enabled; use the repository's **Security → Advisories → Report a vulnerability** flow. No separate maintainer security contact is configured. Adversarial regression tests should accompany confirmed fixes.

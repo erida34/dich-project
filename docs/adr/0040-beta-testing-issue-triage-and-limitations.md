@@ -1,6 +1,6 @@
 # ADR 0040 — Beta Testing Framework, Issue Triage Taxonomy, Threat Model Review, and Compatibility Limitations
 
-Status: Accepted for Phase 7 public release.
+Status: Accepted beta policy; external tester evidence remains pending.
 
 ## Context
 
@@ -13,15 +13,15 @@ Dich is a security-first versioned package store. Ensuring long-term stability a
 
 ### 1. External Beta Program and Feedback
 - Establish clear guidelines for beta testers in `docs/beta-testing-and-triage.md`.
-- Target key user scenarios: rootless developer environments, profile rollback workflows, multi-source repository snapshots, safe garbage collection, and concurrency resilience.
-- Require structured bug reports with environment details, exact CLI invocations, reproducible test cases, and machine-readable error codes.
+- Target key user scenarios: disposable rootless stores, authenticated single-source metadata, the explicitly supported single-root DSO closure, profile rollback, safe garbage collection, and concurrency behavior. Multi-source profile resolution is unsupported.
+- Require structured bug reports with environment details, exact CLI invocations, reproducible test cases, machine-readable error codes, and redacted logs.
 
-### 2. Issue Triage Taxonomy and SLAs
-Define an explicit four-tier bug severity taxonomy:
-- **P0 - Critical Security**: Trust violations, signature bypass, path escapes, arbitrary code execution. Response target < 12 hours, patch fix < 48 hours via security release.
-- **P1 - Data Corruption / Hang**: Database corruption, broken profile generations, GC deletion of live objects, deadlocks. Response target < 24 hours.
-- **P2 - Resolver / Compatibility**: False positives in allowed DSO subset, backtracking errors, valid control parse failures. Response target < 3 days.
-- **P3 - Minor / UX / Docs**: CLI formatting, documentation, non-blocking edge cases. Response target < 7 days.
+### 2. Issue Triage Taxonomy
+Define an explicit four-tier priority taxonomy to guide maintainer attention. It is not a response or resolution SLA; the project makes no acknowledgement or fix-time guarantee during the experimental beta:
+- **P0 - Critical Security**: Trust violations, signature bypass, path escapes, arbitrary code execution.
+- **P1 - Data Corruption / Hang**: Database corruption, broken profile generations, GC deletion of live objects, deadlocks.
+- **P2 - Resolver / Compatibility**: Incorrect behavior within the allowed DSO subset, resolver failures, valid control parse failures.
+- **P3 - Minor / UX / Docs**: CLI formatting, documentation, non-blocking edge cases.
 - Security vulnerabilities must be disclosed responsibly according to `SECURITY.md`.
 
 ### 3. Threat Model Review
@@ -37,7 +37,7 @@ An internal repository-grounded review is recorded in [`dich-project-threat-mode
 
 ### 4. Explicit Compatibility Boundaries
 - Declare explicitly what Dich is and is not: Dich is **not** a general-purpose replacement for `dpkg`/`apt`, does **not** perform arbitrary binary relocation, and does **not** manage system services/daemons.
-- The supported installable package class is strictly bounded to **x86-64 glibc Dynamic Shared Object (DSO) closures** isolated via `dlmopen` or explicit path loading.
+- The supported selection class is strictly bounded to authenticated **x86-64 glibc DSO closures** under ADR 0027/0029. A profile returns explicit object paths; the `dlmopen` fixture demonstrates symbol-namespace separation only, not a sandbox. Loading a DSO runs publisher code with caller privileges.
 - Unsupported packages (maintainer scripts, system files, cross-distribution mixing, unauthenticated sources) fail closed with clear machine-readable diagnostic errors.
 
 ## Consequences

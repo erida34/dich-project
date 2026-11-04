@@ -8,3 +8,4 @@
 - Transaction journal and recovery model; SQLite durability and filesystem synchronization.
 - Privilege boundary; user stores vs managed system store.
 - Release owner, supported Debian/Ubuntu suites, stable release repository and signing process.
+- Production signing-key custody, independent signer review, and external beta recruitment/triage remain open release decisions (ADR 0040, ADR 0041).
