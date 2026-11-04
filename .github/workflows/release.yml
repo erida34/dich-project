@@ -58,10 +58,16 @@ jobs:
             debian@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 \
             ubuntu@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11 \
             ubuntu@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852; do
-            docker run --rm --platform linux/amd64 -v "$PWD:/work:ro" -e DICH_DEB="/work/${deb#./}" "$image" sh -c '
+            case "$image" in
+              debian@*) archive_keyring=debian-archive-keyring ;;
+              ubuntu@*) archive_keyring=ubuntu-keyring ;;
+              *) echo "Unsupported smoke-test image: $image" >&2; exit 1 ;;
+            esac
+            docker run --rm --platform linux/amd64 -v "$PWD:/work:ro" -e DICH_DEB="/work/${deb#./}" -e DICH_ARCHIVE_KEYRING="$archive_keyring" "$image" sh -c '
               set -eu
               printf "path-include /usr/share/man/man1/dich*.1.gz\npath-include /usr/share/man/ru/\npath-include /usr/share/man/ru/man1/\npath-include /usr/share/man/ru/man1/dich*.1.gz\npath-include /usr/share/doc/dich/licenses/*\n" > /etc/dpkg/dpkg.cfg.d/zz-dich-smoke
               apt-get update -qq
+              apt-get install -y -qq "$DICH_ARCHIVE_KEYRING"
               DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$DICH_DEB"
               dich --help
               dich --lang ru --help | grep -F "Использование:"

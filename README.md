@@ -43,12 +43,12 @@ Dich verifies packages against explicit glibc and native architecture baselines 
 ## Installation
 
 ### From Debian Package (`.deb`)
-Download the release artifact `dich_<upstream-version>-<debian-revision>_amd64.deb` from GitHub Releases (for example, `dich_0.7.3-1_amd64.deb`):
+Download the release artifact `dich_<upstream-version>-<debian-revision>_amd64.deb` from GitHub Releases:
 ```sh
 sudo dpkg -i dich_<upstream-version>-<debian-revision>_amd64.deb
 ```
 This installs the `dich` binary to `/usr/bin/dich`, documentation to `/usr/share/man/man1/dich.1.gz`, and shell completions for Bash, Zsh, and Fish.
-During installation, Debian's configuration dialog offers to enable the official archive for supported Debian 12/13 or Ubuntu 22.04/24.04 amd64 systems. The default answer creates a signed-source policy using the system archive keyring and a pinned signing fingerprint. Noninteractive installs use that same default. Answering no leaves sources unconfigured; unsupported systems also install without a source. Existing configuration is never overwritten.
+Starting with version 0.7.4, Debian's configuration dialog offers to enable the official archive for supported Debian 12/13 or Ubuntu 22.04/24.04 amd64 systems. The default answer creates a signed-source policy using the system archive keyring and a pinned signing fingerprint. Noninteractive installs use that same default. Answering no leaves sources unconfigured; unsupported systems also install without a source. Existing configuration is never overwritten. Version 0.7.3 does not include this prompt or the `setup` command; configure its source policy manually as described below.
 
 ### From Source
 Ensure Rust 1.85+ is installed:
@@ -76,7 +76,7 @@ rm -rf ~/.local/share/dich ~/.cache/dich ~/.config/dich
 
 ## Configuration
 
-Dich relies on explicit source policy files defining trusted APT repositories and their OpenPGP keyrings. To create the supported official default later (or after answering no during installation), run:
+Dich relies on explicit source policy files defining trusted APT repositories and their OpenPGP keyrings. On version 0.7.4 or newer, create the supported official default later (or after answering no during installation) with:
 
 ```sh
 sudo dich setup
