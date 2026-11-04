@@ -26,6 +26,7 @@ jobs:
         run: cargo install cargo-audit --version 0.22.2 --locked
       - run: cargo audit
       - run: sh scripts/check-docs.sh
+      - run: sh scripts/test-release-channel.sh
       - run: cargo run --locked -p dich-cli -- --help
 
   deb-package-smoke:

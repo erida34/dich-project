@@ -1,4 +1,4 @@
-name: Release Debian package (experimental)
+name: Release Debian package
 on:
   push:
     tags: ["v*"]
@@ -38,6 +38,9 @@ jobs:
           tag_version="${GITHUB_REF_NAME#v}"
           package_version="$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dich-cli"))')"
           test "$tag_version" = "$package_version"
+      - name: Classify GitHub release channel
+        id: channel
+        run: sh scripts/release-channel.sh "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace --all-targets
@@ -112,4 +115,4 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
-          prerelease: true
+          prerelease: ${{ steps.channel.outputs.prerelease }}
