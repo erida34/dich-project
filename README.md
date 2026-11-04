@@ -123,6 +123,7 @@ Fetch and cryptographically authenticate `InRelease` and package indices:
 dich update
 ```
 Release metadata is limited to 24 hours by default. A signed `Valid-Until` is enforced when present; repositories without that field use the same 24-hour signed-date limit. Use `--require-valid-until` for stricter policy, or override the age with `--max-age-seconds`.
+If an update fails, the diagnostic identifies the failing stage and classified cause (for example, signature authentication, Release freshness, Packages index verification, or cache access); earlier cache entries may already have changed.
 For explicit offline environments:
 ```sh
 dich --offline search openssl

@@ -210,6 +210,9 @@ pub fn error_message_ru(code: &str) -> Option<&'static str> {
         "offline_mode" => "необходимый артефакт отсутствует в кэше, а указан режим --offline",
         "store_open_failed" => "не удалось безопасно открыть хранилище",
         "source_load_failed" => "не удалось загрузить политику источников",
+        "update_failed" => {
+            "не удалось обновить репозиторий; подробная причина указана ниже, кэш мог частично измениться"
+        }
         "cache_unavailable" | "cache_open_failed" => "кэш недоступен",
         "package_not_found" => "пакет не найден",
         "profile_missing" => "профиль не найден",
@@ -237,6 +240,9 @@ pub fn error_hint_ru(code: &str) -> Option<&'static str> {
         }
         "store_open_failed" => "Проверьте путь хранилища через --store-dir или права доступа.",
         "source_load_failed" => "Проверьте файл политики источников через --config.",
+        "update_failed" => {
+            "Подробность ниже указывает этап сбоя; перед повтором проверьте сеть, часы, ключ архива и права на кэш."
+        }
         "cache_unavailable" | "cache_open_failed" => {
             "Проверьте путь кэша через --cache или выполните 'dich update'."
         }

@@ -79,6 +79,45 @@ fn human_errors_render_actionable_hints() {
 }
 
 #[test]
+fn update_errors_include_the_failing_stage_and_classified_cause() {
+    let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+    let sources_file = dir.path().join("test.sources");
+    std::fs::write(
+        &sources_file,
+        "Types: deb\nURIs: https://127.0.0.1:1/debian\nSuites: bookworm\nComponents: main\nArchitectures: amd64\nSigned-By: /dev/null\n",
+    )
+    .unwrap();
+    let config_file = dir.path().join("sources.toml");
+    std::fs::write(
+        &config_file,
+        format!(
+            "[[sources]]\ndistribution = \"debian\"\nsources_file = \"{}\"\nuri = \"https://127.0.0.1:1/debian\"\nsuite = \"bookworm\"\ncomponents = [\"main\"]\narchitecture = \"amd64\"\nkeyring = \"/dev/null\"\nfingerprints = [\"0000000000000000000000000000000000000000\"]\n",
+            sources_file.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dich"))
+        .args([
+            "--json",
+            "--config",
+            config_file.to_str().unwrap(),
+            "--cache",
+            dir.path().join("cache").to_str().unwrap(),
+            "update",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let body: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(body["error"]["code"], "update_failed");
+    let trace = body["error"]["trace"][0].as_str().unwrap();
+    assert!(trace.contains("Release metadata"));
+    assert!(trace.contains("Transport"));
+}
+
+#[test]
 fn structured_logging_redacts_credentials_on_stderr() {
     let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
     let sources_file = dir.path().join("test.sources");

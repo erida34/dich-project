@@ -47,6 +47,8 @@ pub enum FetchError {
     Artifact,
     Timeout,
     Metadata,
+    Authentication(crate::SignatureError),
+    Index(crate::IndexError),
     NotFound,
     Offline,
 }
@@ -77,7 +79,7 @@ pub(crate) fn fetch_release_with_transport(
     let path = format!("dists/{}/InRelease", source.suite());
     match fetch_metadata(source, &path, 4 * 1024 * 1024, transport) {
         Ok(bytes) => {
-            crate::verify_configured_inrelease(source, &bytes).map_err(|_| FetchError::Metadata)
+            crate::verify_configured_inrelease(source, &bytes).map_err(FetchError::Authentication)
         }
         Err(FetchError::NotFound) => {
             let base = format!("dists/{}/", source.suite());
@@ -94,7 +96,7 @@ pub(crate) fn fetch_release_with_transport(
                 transport,
             )?;
             crate::verify_configured_detached_release(source, &release, &signature)
-                .map_err(|_| FetchError::Metadata)
+                .map_err(FetchError::Authentication)
         }
         Err(error) => Err(error),
     }
@@ -151,7 +153,7 @@ pub(crate) fn fetch_index_with_transport(
         &compressed,
         limits,
     )
-    .map_err(|_| FetchError::Metadata)?;
+    .map_err(FetchError::Index)?;
     if !release.is_valid_at(clock()) {
         return Err(FetchError::Metadata);
     }

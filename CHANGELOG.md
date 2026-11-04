@@ -5,7 +5,10 @@ All notable changes to Dich will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.8] - 2026-11-04
+
+### Fixed
+- Preserve the failing update stage and classified cause in CLI diagnostics, including Release authentication, freshness, index verification and cache writes.
 
 ## [0.7.7] - 2026-11-04
 

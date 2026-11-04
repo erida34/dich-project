@@ -726,10 +726,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                             dich_apt::IndexLimits::default(),
                         ),
                     }
-                    .map_err(|_| CliError {
+                    .map_err(|error| CliError {
                         code: "update_failed",
                         message: "repository update failed; earlier cache entries may have changed",
-                        trace: Vec::new(),
+                        trace: vec![error.to_string()],
                     })?;
                     indices += report.indices;
                 }
